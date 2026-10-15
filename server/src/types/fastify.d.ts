@@ -12,5 +12,7 @@ declare module "fastify" {
   interface FastifyRequest {
     /** Set by the deviceAuth middleware on every device-authenticated route. */
     device?: DeviceRow;
+    /** Raw request body, captured for webhook signature verification. */
+    rawBody?: Buffer;
   }
 }

@@ -1,6 +1,7 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { TrustedContactRow } from "../models/device.model.js";
 import type { SosIncidentRow } from "../models/sos.model.js";
+import type { CallEventRow } from "../models/vapi.model.js";
 import type { Database } from "./supabase.service.js";
 import type { CallProviderClient, OutboundCallResult } from "./vapi.service.js";
 import type { IncidentNotifier } from "./sos.service.js";
@@ -133,8 +134,15 @@ export class EscalationService implements IncidentNotifier {
     });
 
     const connected = result.status === "ANSWERED" || result.status === "IN_PROGRESS";
+    const deliveryStatus = connected
+      ? ("DELIVERED" as const)
+      : result.status === "QUEUED" || result.status === "RINGING"
+        ? // Real providers report queued/ringing at creation time; the
+          // webhook later resolves delivery. Never claim more than confirmed.
+          ("ATTEMPTED" as const)
+        : ("FAILED" as const);
     await this.db.updateIncidentRecipient(recipient.id, {
-      delivery_status: connected ? "DELIVERED" : "FAILED",
+      delivery_status: deliveryStatus,
       provider_reference: result.callReference,
     });
 
@@ -154,6 +162,60 @@ export class EscalationService implements IncidentNotifier {
       },
       "escalation: call attempt recorded",
     );
+  }
+
+  /**
+   * Called when a call ends unanswered or failed (spec §5.10): move to the
+   * next trusted contact in priority order. When the contact list is
+   * exhausted, the incident is recorded as needing the next escalation level
+   * (radius expansion), which the nearby-dispatch step consumes.
+   */
+  async handleCallOutcome(callEvent: CallEventRow): Promise<void> {
+    if (callEvent.status !== "NO_ANSWER" && callEvent.status !== "FAILED") return;
+
+    const incident = await this.db.getIncident(callEvent.incident_id);
+    if (!incident) return;
+    if (incident.status === "RESOLVED" || incident.status === "CANCELLED") {
+      this.log.info(
+        { incidentId: incident.id, status: incident.status },
+        "escalation: call ended but incident is already closed — no further action",
+      );
+      return;
+    }
+
+    const contacts = await this.db.listTrustedContacts(incident.device_id);
+    const currentIndex = callEvent.recipient_reference
+      ? contacts.findIndex((c) => c.phone_number === callEvent.recipient_reference)
+      : -1;
+    const next = currentIndex >= 0 ? contacts[currentIndex + 1] : undefined;
+
+    if (!next) {
+      await this.db.appendAuditLog({
+        deviceId: incident.device_id,
+        incidentId: incident.id,
+        eventType: "escalation.contacts_exhausted",
+        data: {
+          level: callEvent.level ?? 1,
+          attemptedRecipient: callEvent.recipient_reference,
+          nextStep: "expand radius to nearby devices",
+        },
+      });
+      this.log.warn(
+        { incidentId: incident.id, level: callEvent.level ?? 1 },
+        "escalation: all trusted contacts attempted — next level is radius expansion",
+      );
+      return;
+    }
+
+    this.log.info(
+      {
+        incidentId: incident.id,
+        previousRecipient: callEvent.recipient_reference,
+        nextRecipient: next.phone_number,
+      },
+      "escalation: moving to the next trusted contact",
+    );
+    await this.notifyContact(incident, next, { level: callEvent.level ?? 1, attempt: 1 });
   }
 
   private async auditAttempt(
