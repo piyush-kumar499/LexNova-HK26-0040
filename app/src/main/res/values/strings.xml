@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+    <string name="app_name">SafeAlert</string>
+    <string name="sos_button">SOS</string>
+    <string name="sos_coming_soon">SOS coming soon</string>
+    <string name="connected">Connected</string>
+    <string name="server_unreachable">Server unreachable</string>
+    <string name="error_text">Server unreachable: </string>
+    <string name="no_trusted_contacts">No trusted contacts yet</string>
+    <string name="add_contact">Add Contact</string>
+    <string name="no_active_checkin">No active check-in</string>
+    <string name="nearby_help">Nearby help will appear here</string>
+    <string name="device_user_id">Device User ID:</string>
+    <string name="shake_to_sos">Shake to SOS</string>
+    <string name="call_112_after_shake">Call 112 after shake</string>
+
+    <!-- Bottom navigation labels -->
+    <string name="nav_home">Home</string>
+    <string name="nav_contacts">Contacts</string>
+    <string name="nav_checkin">Check-in</string>
+    <string name="nav_nearby">Nearby</string>
+    <string name="nav_settings">Settings</string>
+</resources>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<networkSecurityConfig>
+    <base-config cleartextTrafficPermitted="true">
+        <trustAnchors>
+            <certificates android="system" />
+        </trustAnchors>
+    </base-config>
+</networkSecurityConfig>
