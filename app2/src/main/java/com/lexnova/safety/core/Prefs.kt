@@ -6,7 +6,13 @@ class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("lexnova_prefs", Context.MODE_PRIVATE)
 
     var serverUrl: String
-        get() = sp.getString("server_url", null) ?: DEFAULT_SERVER_URL
+        get() {
+            val saved = sp.getString("server_url", null)
+            // A stored legacy USB-testing default is not a real choice — fall
+            // back to the live server so the app works out of the box.
+            if (saved == null || saved == LEGACY_USB_DEFAULT) return DEFAULT_SERVER_URL
+            return saved
+        }
         set(value) {
             sp.edit().putString("server_url", value.trim().trimEnd('/')).apply()
         }
@@ -44,9 +50,10 @@ class Prefs(context: Context) {
         }
 
     companion object {
-        // USB debugging: adb reverse tcp:8080 tcp:8080 makes the laptop's
-        // server reachable at 127.0.0.1:8080 on the phone.
-        const val DEFAULT_SERVER_URL = "http://127.0.0.1:8080"
+        // Live server (ngrok tunnel to the Fastify backend). For USB-only
+        // testing, switch to http://127.0.0.1:8080 + 'adb reverse tcp:8080 tcp:8080'.
+        const val DEFAULT_SERVER_URL = "https://ethanol-cash-peculiar.ngrok-free.dev"
+        const val LEGACY_USB_DEFAULT = "http://127.0.0.1:8080"
 
         // Vapi phone number "sefty" (server/.env: VAPI_PHONE_NUMBER_ID).
         const val DEFAULT_VAPI_NUMBER = "19144651304"

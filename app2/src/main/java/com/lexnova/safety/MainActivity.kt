@@ -27,6 +27,8 @@ class MainActivity : ComponentActivity() {
         val needed = listOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.CALL_PHONE,
+            Manifest.permission.POST_NOTIFICATIONS,
         ).filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }

@@ -59,7 +59,7 @@ fun SettingsScreen(vm: MainViewModel) {
                     singleLine = true,
                 )
                 Text(
-                    "USB testing: keep http://127.0.0.1:8080 and run 'adb reverse tcp:8080 tcp:8080' on the laptop.",
+                    "Default is the live server (ngrok). For USB-only testing use http://127.0.0.1:8080 and run 'adb reverse tcp:8080 tcp:8080' on the laptop.",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextDim,
                 )

@@ -28,6 +28,7 @@ import com.lexnova.safety.data.LexNovaRepository
 import com.lexnova.safety.data.NearbyIncident
 import com.lexnova.safety.location.LocationProvider
 import com.lexnova.safety.sensors.ShakeDetector
+import com.lexnova.safety.sensors.ShakeGuardService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -66,7 +67,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val shakeDetector = ShakeDetector(context) { onShakeDetected() }
 
     init {
-        if (prefs.shakeEnabled) shakeDetector.start()
+        if (prefs.shakeEnabled) {
+            shakeDetector.start()
+            ShakeGuardService.start(context)
+        }
         shakeDetector.setSensitivity(prefs.shakeSensitivity)
         refreshAll()
     }
@@ -344,7 +348,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setShakeEnabled(value: Boolean) {
         prefs.shakeEnabled = value
-        if (value) shakeDetector.start() else shakeDetector.stop()
+        if (value) {
+            shakeDetector.start()
+            ShakeGuardService.start(context)
+        } else {
+            shakeDetector.stop()
+            ShakeGuardService.stop(context)
+        }
     }
 
     fun setShakeSensitivity(value: Int) {
