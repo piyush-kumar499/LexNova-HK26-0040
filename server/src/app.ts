@@ -11,6 +11,7 @@ import { createDatabase, type Database } from "./services/supabase.service.js";
 import { DeviceService } from "./services/device.service.js";
 import { SosService } from "./services/sos.service.js";
 import { EscalationService } from "./services/escalation.service.js";
+import { NearbyService } from "./services/nearby.service.js";
 import {
   createCallProvider,
   VapiWebhookService,
@@ -23,6 +24,7 @@ import { healthRoutes } from "./routes/health.js";
 import { deviceRoutes } from "./routes/device.js";
 import { sosRoutes } from "./routes/sos.js";
 import { vapiRoutes } from "./routes/vapi.js";
+import { nearbyRoutes } from "./routes/nearby.js";
 
 /**
  * Shared context handed to route registrars. Grows as features land
@@ -35,6 +37,7 @@ export interface AppContext {
   deviceService: DeviceService;
   sosService: SosService;
   escalation: EscalationService;
+  nearbyService: NearbyService;
   callProvider: CallProviderClient;
   vapiWebhook: VapiWebhookService;
   limiter: RateLimiter;
@@ -91,6 +94,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const escalation = new EscalationService(bundle.db, callProvider, app.log);
   const sosService = new SosService(bundle.db, app.log, escalation);
   const vapiWebhook = new VapiWebhookService(bundle.db, escalation, app.log);
+  const nearbyService = new NearbyService(bundle.db, app.log);
 
   const ctx: AppContext = {
     config: deps.config,
@@ -99,6 +103,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     deviceService,
     sosService,
     escalation,
+    nearbyService,
     callProvider,
     vapiWebhook,
     limiter,
@@ -117,6 +122,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   deviceRoutes(app, ctx);
   sosRoutes(app, ctx);
   vapiRoutes(app, ctx);
+  nearbyRoutes(app, ctx);
 
   return app;
 }
