@@ -24,6 +24,7 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.lexnova.safety.MainActivity
@@ -160,7 +161,10 @@ class ShakeGuardService : Service(), SensorEventListener {
         firedAt = now
         vibrate()
         scope.launch {
+            // Wait briefly for a live fix: an SOS without a location is
+            // invisible to nearby devices.
             val fix = LocationProvider.quickFix(this@ShakeGuardService)
+                ?: LocationProvider.getFix(this@ShakeGuardService, 6000)
             val created = postSos(fix)
             if (created) {
                 dialVapi()
@@ -232,20 +236,69 @@ class ShakeGuardService : Service(), SensorEventListener {
         }
     }
 
+    /**
+     * With CALL_PHONE granted, the call is launched via a full-screen-intent
+     * notification: the system (not the app) opens the in-call UI over the
+     * keyguard, so a locked-screen shake dials instantly with zero taps and
+     * is not blocked as a background activity launch. Without the permission
+     * the dialer opens pre-filled as the best available fallback.
+     */
     private fun dialVapi() {
         val number = prefs.vapiNumber
         if (number.isBlank()) return
         val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) ==
             PackageManager.PERMISSION_GRANTED
-        val intent = Intent(
-            if (granted) Intent.ACTION_CALL else Intent.ACTION_DIAL,
-            Uri.parse("tel:+$number"),
-        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (!granted) {
+            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:+$number"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            try {
+                startActivity(intent)
+                Log.i(TAG, "opening dialer for +$number")
+            } catch (e: Exception) {
+                Log.e(TAG, "dialer open failed", e)
+            }
+            return
+        }
+        if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) {
+            try {
+                startActivity(
+                    Intent(Intent.ACTION_CALL, Uri.parse("tel:+$number"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+                Log.i(TAG, "SOS call (direct, notifications off) to +$number")
+            } catch (e: Exception) {
+                Log.e(TAG, "direct call failed", e)
+            }
+            return
+        }
         try {
-            startActivity(intent)
-            Log.i(TAG, "dialing Vapi line +$number (direct=${granted})")
+            val callIntent = Intent(Intent.ACTION_CALL, Uri.parse("tel:+$number"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val fullScreen = PendingIntent.getActivity(
+                this, 2001, callIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val channelId = "lexnova_sos_call"
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(
+                NotificationChannel(channelId, "SOS emergency call", NotificationManager.IMPORTANCE_HIGH).apply {
+                    setSound(null, null)
+                    enableVibration(false)
+                },
+            )
+            val notification: Notification = NotificationCompat.Builder(this, channelId)
+                .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+                .setContentTitle("LexNova SOS")
+                .setContentText("Emergency call to the LexNova helpline")
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setFullScreenIntent(fullScreen, true)
+                .setAutoCancel(true)
+                .build()
+            manager.notify(SOS_CALL_NOTIFICATION_ID, notification)
+            Log.i(TAG, "SOS call launched over keyguard to +$number")
         } catch (e: Exception) {
-            Log.e(TAG, "dial failed", e)
+            Log.e(TAG, "SOS call launch failed", e)
         }
     }
 
@@ -263,6 +316,7 @@ class ShakeGuardService : Service(), SensorEventListener {
 
     companion object {
         private const val TAG = "ShakeGuardService"
+        private const val SOS_CALL_NOTIFICATION_ID = 77
 
         fun start(context: Context) {
             val intent = Intent(context, ShakeGuardService::class.java)

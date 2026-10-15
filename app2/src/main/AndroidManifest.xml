@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <application
         android:label="@string/app_name"
@@ -28,6 +29,14 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ui.NearbyAlertActivity"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+
         <service
             android:name=".sensors.ShakeGuardService"
             android:exported="false"
@@ -35,6 +44,15 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Shake-to-SOS detection while the screen is locked or off" />
+        </service>
+
+        <service
+            android:name=".sensors.NearbyAlertService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Nearby SOS alert polling so bystanders ring, vibrate, and see a lock-screen popup" />
         </service>
     </application>
 

@@ -49,6 +49,19 @@ class Prefs(context: Context) {
             else sp.edit().putString("last_dialed_incident_id", value).apply()
         }
 
+    /**
+     * Nearby incidents this device already rang for. Returns false when the
+     * incident was already alerted, true when newly remembered. Capped at 20
+     * so the set cannot grow without bound.
+     */
+    fun markAlerted(incidentId: String): Boolean {
+        val set = sp.getStringSet("alerted_incidents", emptySet())?.toMutableSet() ?: mutableSetOf()
+        if (!set.add(incidentId)) return false
+        while (set.size > 20) set.remove(set.first())
+        sp.edit().putStringSet("alerted_incidents", set).apply()
+        return true
+    }
+
     companion object {
         // Live server (ngrok tunnel to the Fastify backend). For USB-only
         // testing, switch to http://127.0.0.1:8080 + 'adb reverse tcp:8080 tcp:8080'.

@@ -27,6 +27,7 @@ import com.lexnova.safety.data.IncidentView
 import com.lexnova.safety.data.LexNovaRepository
 import com.lexnova.safety.data.NearbyIncident
 import com.lexnova.safety.location.LocationProvider
+import com.lexnova.safety.sensors.NearbyAlertService
 import com.lexnova.safety.sensors.ShakeDetector
 import com.lexnova.safety.sensors.ShakeGuardService
 import kotlinx.coroutines.Job
@@ -70,6 +71,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (prefs.shakeEnabled) {
             shakeDetector.start()
             ShakeGuardService.start(context)
+        }
+        if (prefs.canRespond) {
+            NearbyAlertService.start(context)
         }
         shakeDetector.setSensitivity(prefs.shakeSensitivity)
         refreshAll()
@@ -127,8 +131,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             state = state.copy(busy = true, error = null)
             try {
-                // Fire immediately with a quick fix; the live fix is posted after.
+                // An SOS without a location is invisible to nearby devices —
+                // wait briefly for a live fix when no recent one exists.
                 val fix = LocationProvider.quickFix(context)
+                    ?: LocationProvider.getFix(context, 6000)
                 val (incident, created) = repo.createSos(triggerType, fix?.latitude, fix?.longitude, fix?.accuracy)
                 state = state.copy(busy = false, lastAction = if (created) "Incident created" else "Incident already active")
                 startPolling(incident.id)
@@ -337,6 +343,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setCanRespond(value: Boolean) {
         prefs.canRespond = value
+        if (value) NearbyAlertService.start(context) else NearbyAlertService.stop(context)
         viewModelScope.launch {
             try {
                 state = state.copy(device = repo.patchMe(canRespond = value))
