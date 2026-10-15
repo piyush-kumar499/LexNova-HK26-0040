@@ -27,9 +27,12 @@ from the project specification, or planned work, not delivered yet.
 | Per-viewer scoping: owner vs responder, exact location only after `ACCEPTED` | ✅ implemented + tests |
 | Rate limiting, duplicate-tap protection, append-only audit log | ✅ implemented + tests |
 | Supabase migrations: schema, PostGIS functions, RLS | ✅ written (`server/migrations/`) — applying them to a hosted project is a setup step (§13) |
-| Escalation chain (mock-first Vapi adapter): trusted contacts → nearby devices by widening radius, watchdog on silent attempts, boot rehydration, stops the moment a responder accepts | ✅ implemented + tests; ⬜ HTTP CRUD endpoints for contacts |
+| Escalation chain (mock-first Vapi adapter): trusted contacts → nearby devices by widening radius, watchdog on silent attempts, boot rehydration, stops the moment a responder accepts | ✅ implemented + tests |
+| Trusted contacts CRUD (`GET/POST/DELETE /contacts`) | ✅ implemented + tests |
+| Responder flows: accept / decline / en-route / arrived / withdraw, per-incident membership (no stored role) | ✅ implemented + tests |
 | Vapi webhook: signature verification, status / transcript / recording intake, delivery truth, no-answer → next contact | ✅ implemented + tests |
-| Nearby discovery: polling endpoint with privacy-rounded distance, PostGIS + in-memory equivalence, NOTIFIED responder membership | ✅ polling implemented + tests; ⬜ accept / decline / en-route flows |
+| Nearby discovery: polling endpoint with privacy-rounded distance, PostGIS + in-memory equivalence, NOTIFIED responder membership | ✅ implemented + tests |
+| Offline-queued SOS events: original activation time preserved, device-scoped replay idempotency | ✅ implemented + tests |
 | Emergency intelligence engine on **Groq** (§10) | ⬜ specified here, not implemented |
 | Kotlin / Jetpack Compose Android app — incl. SOS voice dial-out (§11), shake, camera, UI | 🚧 in progress by another team member in this repo — work not pushed yet |
 | FCM push, real Vapi number, WebRTC, Maps, Groq credentials | ⬜ external — need credentials/authorization (§9) |
@@ -139,6 +142,10 @@ POST  /sos                       idempotent SOS creation (clientRequestId); retu
 GET   /sos/:incidentId           owner sees the full view; responder scoped, location only after ACCEPTED
 POST  /sos/:incidentId/cancel    false-alarm cancel (owner; ACTIVE/HELP_REQUESTED only)
 POST  /sos/:incidentId/resolve   resolve (owner; only after RESPONDER_ACKNOWLEDGED)
+POST  /sos/:incidentId/respond   responder step: ACCEPT / DECLINE / EN_ROUTE / ARRIVED / WITHDRAW
+GET   /contacts                  trusted contacts in call order (priority asc)
+POST  /contacts                  add trusted contact (phone normalized to +digits)
+DELETE /contacts/:contactId      remove trusted contact
 GET   /nearby/sos                polling: local active incidents for respond-enabled devices — distance rounded to 100 m, never victim coordinates
 POST  /vapi/webhook              provider webhook — signature-verified, acked fast, processed async
 ```
@@ -326,7 +333,8 @@ Security is a hard requirement, not a phase.
 Test requirement: automated cases proving one user cannot access another user's incidents,
 evidence, or trusted contacts, and cannot forge responder membership. The current suite covers
 device isolation and responder scoping end-to-end at the endpoint level (`server/tests/`);
-membership-forging cases land with the responder HTTP flows.
+responder actions reject any device without a membership row (403 `NOT_A_RESPONDER`), so
+membership cannot be forged from the client.
 
 ---
 
@@ -575,8 +583,10 @@ npm run build && npm start  # compiled run
   applied.
 - **Webhooks:** Vapi needs a public URL — set `NGROK_URL` and point the Vapi dashboard webhook
   to `NGROK_URL/vapi/webhook`. Free ngrok URLs change on every restart.
-- The full environment template is `server/.env.example`. Health check today is `GET /health`;
-  the combined Supabase/Groq/Vapi configuration report (§10.1) is still planned.
+- The full environment template is `server/.env.example`; step-by-step Supabase/PostGIS,
+  Vapi + ngrok (including the update-after-every-restart checklist), mock-vs-real and test
+  instructions live in [`server/README.md`](server/README.md). Health check today is
+  `GET /health`; the combined Supabase/Groq/Vapi configuration report (§10.1) is still planned.
 
 ### Android app (being built by another team member in this repo — not pushed yet)
 
@@ -625,7 +635,15 @@ no real calls):**
   rehydration (including re-arming the watchdog for an in-flight attempt), and the watchdog
   advancing an unanswered attempt after the configured timeout;
 - webhook: signature rejection and acceptance (HMAC + bearer), status application, transcript
-  segment dedup, recording reference as evidence, unknown-reference quarantine, malformed JSON.
+  segment dedup, recording reference as evidence, unknown-reference quarantine, malformed JSON;
+- responder actions: per-incident membership transitions with per-step timestamps, 409s on
+  illegal steps, decline marks delivery, withdrawal resumes the chain;
+- contacts CRUD: phone normalization to +digits, duplicate rejection, per-device isolation,
+  call order;
+- offline-queued events: activation time preserved, device-scoped replay idempotency, stale
+  events still escalate;
+- critical path: one named test per spec §15 scenario (13), including the same-device
+  seeker/responder dual-role case.
 
 **Minimum scenarios required by the specification:**
 
