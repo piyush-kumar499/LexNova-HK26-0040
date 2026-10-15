@@ -587,12 +587,22 @@ export class VapiWebhookService {
   private async syncRecipientDelivery(callEvent: CallEventRow): Promise<void> {
     if (!callEvent.recipient_reference) return;
 
-    const recipient = await this.db.getIncidentRecipient({
+    // Calls target trusted contacts (reference = phone) or nearby devices
+    // (reference = device:<uuid>); find whichever recipient row matches.
+    let recipient = await this.db.getIncidentRecipient({
       incidentId: callEvent.incident_id,
       recipientType: "trusted_contact",
       recipientReference: callEvent.recipient_reference,
       level: callEvent.level ?? 1,
     });
+    if (!recipient) {
+      recipient = await this.db.getIncidentRecipient({
+        incidentId: callEvent.incident_id,
+        recipientType: "nearby_device",
+        recipientReference: callEvent.recipient_reference,
+        level: callEvent.level ?? 1,
+      });
+    }
     if (!recipient) return;
 
     let delivery: DeliveryStatus | null = null;

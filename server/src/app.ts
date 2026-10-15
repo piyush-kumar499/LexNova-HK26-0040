@@ -91,10 +91,16 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const deviceService = new DeviceService(bundle.db);
   const deviceAuth = createDeviceAuth({ deviceService });
   const callProvider = createCallProvider(deps.config, app.log);
-  const escalation = new EscalationService(bundle.db, callProvider, app.log);
+  const nearbyService = new NearbyService(bundle.db, app.log);
+  const escalation = new EscalationService(
+    bundle.db,
+    callProvider,
+    app.log,
+    deps.config,
+    nearbyService,
+  );
   const sosService = new SosService(bundle.db, app.log, escalation);
   const vapiWebhook = new VapiWebhookService(bundle.db, escalation, app.log);
-  const nearbyService = new NearbyService(bundle.db, app.log);
 
   const ctx: AppContext = {
     config: deps.config,
@@ -123,6 +129,18 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   sosRoutes(app, ctx);
   vapiRoutes(app, ctx);
   nearbyRoutes(app, ctx);
+
+  app.addHook("onClose", async () => {
+    escalation.stop();
+  });
+
+  // Resume incidents left open by a previous process (spec §10). Only for the
+  // real backend: an injected database is a test double the caller owns.
+  if (!deps.db) {
+    void escalation.rehydrateOpenIncidents().catch((error: unknown) => {
+      app.log.error({ err: error }, "escalation: boot rehydration failed");
+    });
+  }
 
   return app;
 }

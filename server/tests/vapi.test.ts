@@ -163,7 +163,7 @@ describe("SOS notification pipeline (mock provider)", () => {
     expect((await db.listCallEvents(incidentId)).length).toBe(1);
   });
 
-  it("notifyContact is idempotent per (recipient, level, attempt)", async () => {
+  it("notifyRecipient is idempotent per (recipient, level, attempt)", async () => {
     const created = await app.inject({
       method: "POST",
       url: "/sos",
@@ -175,7 +175,17 @@ describe("SOS notification pipeline (mock provider)", () => {
 
     const incident = await db.getIncident(incidentId);
     const contact = (await db.listTrustedContacts(VALID_DEVICE_ID))[0]!;
-    await app.ctx.escalation.notifyContact(incident!, contact, { level: 1, attempt: 1 });
+    await app.ctx.escalation.notifyRecipient(
+      incident!,
+      {
+        recipientType: "trusted_contact",
+        reference: contact.phone_number,
+        toNumber: contact.phone_number,
+        distanceM: null,
+        label: contact.contact_name,
+      },
+      1,
+    );
 
     expect((await db.listCallEvents(incidentId)).length).toBe(1);
   });
