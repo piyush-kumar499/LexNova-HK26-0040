@@ -29,6 +29,21 @@ async function main(): Promise<void> {
     app.log.fatal({ err: error }, "SS-01 server failed to start");
     process.exit(1);
   }
+
+  // Render sends SIGTERM on every deploy/restart; close cleanly so in-flight
+  // requests finish and the escalation timer stops (app onClose hook).
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.once(signal, () => {
+      app.log.info({ signal }, "shutdown signal received — closing server");
+      app.close().then(
+        () => process.exit(0),
+        (error: unknown) => {
+          app.log.error({ err: error }, "error during shutdown");
+          process.exit(1);
+        },
+      );
+    });
+  }
 }
 
 main().catch((error: unknown) => {

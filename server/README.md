@@ -115,6 +115,27 @@ https://<random>.ngrok-free.app/vapi/webhook
 
 ---
 
+## Deploy on Render (Blueprint)
+
+`render.yaml` at the repository root defines the service — you do not create it by hand.
+
+1. Render dashboard → **New → Blueprint** → connect this repository → **Apply**.
+2. Render creates the `lexnova-ss01-server` web service (`rootDir: server`, free plan,
+   build `npm ci --include=dev && npm run build`, start `npm start`, health check
+   `/health`, auto-deploy on every commit to the connected branch).
+3. The blueprint marks the secrets as `sync: false`, so Render asks for them on first
+   apply. Fill them from `server/.env` (they are git-ignored and never committed):
+   `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `VAPI_PRIVATE_KEY`,
+   `VAPI_PHONE_NUMBER_ID`, `VAPI_ASSISTANT_ID`, `VAPI_WEBHOOK_SECRET`.
+4. After the first deploy, point the Vapi assistant's *Server URL* to
+   `https://<service-name>.onrender.com/vapi/webhook` — this replaces the ngrok URL and
+   survives restarts.
+5. Free plan caveat: the service **spins down after ~15 minutes of inactivity** and the
+   next request takes ~30–60 s to wake it. Webhooks delivered during sleep can be
+   delayed; hit `/health` before a demo to warm it up.
+
+---
+
 ## What is real vs mocked
 
 | Area | Without credentials (default) | With credentials |
