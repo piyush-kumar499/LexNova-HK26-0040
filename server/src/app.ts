@@ -8,6 +8,7 @@ import { createDeviceAuth, createDeviceRateLimit } from "./middleware/deviceAuth
 import { createRateLimiter, type RateLimiter } from "./middleware/rateLimit.js";
 import { registerErrorHandlers } from "./middleware/error.js";
 import { healthRoutes } from "./routes/health.js";
+import { deviceRoutes } from "./routes/device.js";
 
 /**
  * Shared context handed to route registrars. Grows as features land
@@ -64,6 +65,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerErrorHandlers(app);
 
   app.register(healthRoutes);
+  deviceRoutes(app, ctx);
 
   return app;
 }
