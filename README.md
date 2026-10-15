@@ -28,7 +28,7 @@ from the project specification, or planned work, not delivered yet.
 | Supabase migrations: schema, PostGIS functions, RLS | ✅ written (`server/migrations/`) — applying them to a hosted project is a setup step (§13) |
 | Trusted-contact storage + escalation dialing to contacts (mock-first Vapi adapter) | ✅ calls; ⬜ HTTP CRUD endpoints for contacts |
 | Vapi webhook: signature verification, status / transcript / recording intake, delivery truth, no-answer → next contact | ✅ implemented + tests |
-| Nearby discovery (PostGIS + in-memory equivalent) and responder membership tables | ✅ data layer; ⬜ HTTP flows (notify / accept / decline) |
+| Nearby discovery: polling endpoint with privacy-rounded distance, PostGIS + in-memory equivalence, NOTIFIED responder membership | ✅ polling implemented + tests; ⬜ accept / decline / en-route flows |
 | Emergency intelligence engine on **Groq** (§10) | ⬜ specified here, not implemented |
 | Kotlin / Jetpack Compose Android app — incl. SOS voice dial-out (§11), shake, camera, UI | ⬜ not started |
 | FCM push, real Vapi number, WebRTC, Maps, Groq credentials | ⬜ external — need credentials/authorization (§9) |
@@ -111,8 +111,8 @@ server/                         # implemented — Node + Fastify backend
   src/config/       environment parsing + validation (Zod), production guards
   src/middleware/   device identity, per-device rate limiting, error shape, idempotency
   src/models/       request schemas + row models, incident/responder state machines
-  src/routes/       health · device · sos · vapi webhook
-  src/services/     sos, device, escalation, vapi (mock + REST adapter), supabase,
+  src/routes/       health · device · sos · nearby · vapi webhook
+  src/services/     sos, device, escalation, nearby, vapi (mock + REST adapter), supabase,
                     in-memory database (development fallback)
   src/utils/        crypto (HMAC, constant-time compare), errors, logger
   migrations/       0001 schema · 0002 PostGIS functions · 0003 RLS — version-controlled SQL
@@ -138,11 +138,13 @@ POST  /sos                       idempotent SOS creation (clientRequestId); retu
 GET   /sos/:incidentId           owner sees the full view; responder scoped, location only after ACCEPTED
 POST  /sos/:incidentId/cancel    false-alarm cancel (owner; ACTIVE/HELP_REQUESTED only)
 POST  /sos/:incidentId/resolve   resolve (owner; only after RESPONDER_ACKNOWLEDGED)
+GET   /nearby/sos                polling: local active incidents for respond-enabled devices — distance rounded to 100 m, never victim coordinates
 POST  /vapi/webhook              provider webhook — signature-verified, acked fast, processed async
 ```
 
 All routes except `/health` and `/vapi/webhook` require the `X-Device-Id` header; mutating
-routes are rate-limited per device.
+routes are rate-limited per device, and `/nearby/sos` polling is deliberately exempt —
+frequent polling is the designed use, and its only write is an idempotent membership insert.
 
 ---
 
@@ -609,6 +611,10 @@ no real calls):**
 - SOS: creation, duplicate `clientRequestId` replays, latest-location fallback, cancel and
   resolve rules, the state machine, owner vs non-owner access, NOTIFIED vs ACCEPTED responder
   scoping;
+- nearby polling: 100 m distance-rounding floor, coordinates never returned pre-accept,
+  NOTIFIED membership registered exactly once, stored-location fallback, radius and
+  maxResults filtering, own-incident exclusion, cancelled incidents hidden, respond-opt-out
+  rejection, explicit location-required error;
 - in-memory database equivalence: PostGIS-style nearby queries with privacy / eligibility
   filters, SOS + call idempotency, trusted-contact scoping;
 - Vapi: status normalization, provider selection (mock vs real), escalation calls with
@@ -668,9 +674,10 @@ comes from a run of the suite.
 
 ## 15. Roadmap
 
-> Server-side progress: the backend half of item 1 and the mock-first calling + webhook half
-> of items 5–7 are implemented in `server/` (see §1). The Android app, nearby HTTP flows,
-> responder accept/decline endpoints, and the Groq engine remain ahead.
+> Server-side progress: the backend half of item 1, the mock-first calling + webhook half
+> of items 5–7, and the nearby polling endpoint (item 4) are implemented in `server/`
+> (see §1). Responder accept / decline / en-route transitions, the Android app, and the
+> Groq engine remain ahead.
 
 1. **Foundation** — Android project, DI, navigation, Supabase link, migrations + RLS, SOS
    state machine, tests for owner isolation.
