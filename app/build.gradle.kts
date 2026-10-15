@@ -1,19 +1,8 @@
-import java.util.Properties
-
 plugins {
     id("com.android.application") version "8.2.2"
     id("org.jetbrains.kotlin.android") version "1.9.22"
     id("org.jetbrains.kotlin.plugin.serialization") version "1.9.22"
 }
-
-val localProps = Properties().apply {
-    val file = rootProject.file("local.properties")
-    if (file.exists()) {
-        file.inputStream().use { load(it) }
-    }
-}
-val serverBaseUrl: String =
-    localProps.getProperty("SERVER_BASE_URL") ?: "http://10.0.2.2:3000/"
 
 android {
     namespace = "com.safealert.app"
@@ -28,11 +17,7 @@ android {
     }
 
     buildTypes {
-        debug {
-            buildConfigField("String", "BASE_URL", "\"$serverBaseUrl\"")
-        }
         release {
-            buildConfigField("String", "BASE_URL", "\"https://REPLACE_WITH_SERVER_URL/\"")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -61,14 +46,11 @@ android {
 }
 
 dependencies {
-    // Compose BOM
-    implementation(platform("androidx.compose:compose-bom:2024.02.00"))
+    // Compose - explicit versions (no BOM to avoid conflict)
+    implementation("androidx.compose:compose-bom:2024.11.00")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.8.2")
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    debugImplementation("androidx.compose.ui:ui-tooling")
 
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.7.7")
