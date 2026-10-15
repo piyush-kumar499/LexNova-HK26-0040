@@ -13,8 +13,8 @@ type.
 ## 1. Current status — read this first
 
 **The server foundation is implemented and covered by automated tests** (`server/`, Node +
-TypeScript + Fastify). The Android app is a separate workstream being built by another team
-member — it has not landed in this repository yet. Every row marked ⬜ is a target
+TypeScript + Fastify). The Android app is being built in this repository by another team
+member — that work has not been pushed yet. Every row marked ⬜ is a target
 from the project specification, or planned work, not delivered yet.
 
 | Area | Status |
@@ -31,7 +31,7 @@ from the project specification, or planned work, not delivered yet.
 | Vapi webhook: signature verification, status / transcript / recording intake, delivery truth, no-answer → next contact | ✅ implemented + tests |
 | Nearby discovery: polling endpoint with privacy-rounded distance, PostGIS + in-memory equivalence, NOTIFIED responder membership | ✅ polling implemented + tests; ⬜ accept / decline / en-route flows |
 | Emergency intelligence engine on **Groq** (§10) | ⬜ specified here, not implemented |
-| Kotlin / Jetpack Compose Android app — incl. SOS voice dial-out (§11), shake, camera, UI | 🚧 in progress by another team member — not yet in this repository |
+| Kotlin / Jetpack Compose Android app — incl. SOS voice dial-out (§11), shake, camera, UI | 🚧 in progress by another team member in this repo — work not pushed yet |
 | FCM push, real Vapi number, WebRTC, Maps, Groq credentials | ⬜ external — need credentials/authorization (§9) |
 
 The server test suite runs entirely on mocks — no Supabase project, no API keys, and no real
@@ -85,10 +85,10 @@ Android side will pin versions in `gradle/libs.versions.toml` at first scaffold.
 
 ## 4. Project layout
 
-Planned Android package boundaries (another team member's workstream — not yet in this repository) and the implemented server layout:
+Android package boundaries (being built by another team member in this repo — not pushed yet) and the implemented server layout:
 
 ```
-app/                            # planned — Android app (teammate workstream, not yet in this repo)
+app/                            # in progress — Android app (teammate workstream, not pushed yet)
   auth/          device identity bootstrap (no login — X-Device-Id), profile setup
   home/          landing after device bootstrap, permission state
   sos/           activation, incident state machine, cancel/resolve
@@ -342,7 +342,7 @@ test or demo.
 | --- | --- | --- |
 | **Groq** (emergency-analysis LLM) | ⬜ not integrated | Groq account + `GROQ_API_KEY` held server-side; a currently-supported model ID via `GROQ_MODEL`; backend health check (§10) |
 | FCM push notifications | ⬜ not integrated | Firebase project, server credentials, notification permissions — also the delivery path for nearby-responder alerts (§11.3) |
-| Vapi AI calls + telephony number | Server adapter + webhook handler implemented (mock-first) | The outbound-call client (REST) and webhook verification/intake exist in `server/`; without a Vapi account, dedicated number, and keys the provider factory stays on the mock. The app-side SOS dial-out (§11) lives in the Android workstream (another team member) — not yet in this repository |
+| Vapi AI calls + telephony number | Server adapter + webhook handler implemented (mock-first) | The outbound-call client (REST) and webhook verification/intake exist in `server/`; without a Vapi account, dedicated number, and keys the provider factory stays on the mock. The app-side SOS dial-out (§11) is part of the Android app work under way in this repo (another team member) — not pushed yet |
 | WebRTC live video/audio | ⬜ interface only | Signaling path, TURN/STUN infrastructure, explicit consent flow |
 | Google Maps | ⬜ not integrated | Billing-enabled API key, usage-policy review |
 | Police / ambulance dispatch | ⬜ no integration exists | Official emergency-service API or authorized partnership. Without it, escalation notifies trusted contacts and the user; it does **not** claim dispatch. Success is recorded only on receiving-service confirmation |
@@ -578,7 +578,7 @@ npm run build && npm start  # compiled run
 - The full environment template is `server/.env.example`. Health check today is `GET /health`;
   the combined Supabase/Groq/Vapi configuration report (§10.1) is still planned.
 
-### Android app (being built by another team member — not yet in this repository)
+### Android app (being built by another team member in this repo — not pushed yet)
 
 Prerequisites: Android Studio with the JDK required by the AGP version pinned at scaffold
 time, and a physical Android device for sensor/camera/location testing.
@@ -682,8 +682,8 @@ comes from a run of the suite.
 > Server-side progress: the backend half of item 1, the mock-first calling + webhook +
 > multi-level escalation chain (items 5–7), and the nearby polling endpoint (item 4) are
 > implemented in `server/` (see §1). Responder accept / decline / en-route transitions and
-> the Groq engine remain ahead; the Android app is being built in a separate team-member
-> workstream.
+> the Groq engine remain ahead; the Android app is being built by another team member in
+> this repository (not pushed yet).
 
 1. **Foundation** — Android project, DI, navigation, Supabase link, migrations + RLS, SOS
    state machine, tests for owner isolation.
@@ -710,7 +710,7 @@ comes from a run of the suite.
 
 - Server-first state: the backend foundation exists and is covered by a mock-based test suite,
   but nothing is deployed, no real call has been placed, and the Android app (another team
-  member's workstream) has not landed in this repository yet — there is no end-to-end product today.
+  member's workstream in this repo) has not been pushed yet — there is no end-to-end product today.
 - Emergency-service dispatch is out of reach without official integration or authorization;
   until then the product assists and informs, and must be described that way in all copy.
 - The voice uplink (§11) needs mobile voice coverage, a working Vapi number, and a
