@@ -18,6 +18,15 @@ export interface CreateSosResult {
   created: boolean;
 }
 
+/**
+ * Post-activation pipeline port (spec §5.4): notifications and escalation run
+ * asynchronously after the incident is created; the SOS response never waits
+ * for them. Implemented by EscalationService.
+ */
+export interface IncidentNotifier {
+  startForIncident(incident: SosIncidentRow): Promise<void>;
+}
+
 /** Fields safe to reveal about an incident to someone who can see it at all. */
 export function toIncidentCore(row: SosIncidentRow) {
   return {
@@ -116,6 +125,7 @@ export class SosService {
   constructor(
     private readonly db: Database,
     private readonly log: FastifyBaseLogger,
+    private readonly notifier?: IncidentNotifier,
   ) {}
 
   /**
@@ -178,6 +188,18 @@ export class SosService {
       },
       result.created ? "sos.created" : "sos.duplicate_replayed",
     );
+
+    // Fire-and-forget: notification/escalation must never block or fail the
+    // SOS response (spec §5.4). Only first creation dispatches; replays don't.
+    if (result.created && this.notifier) {
+      const notifier = this.notifier;
+      void notifier.startForIncident(incident).catch((error: unknown) => {
+        this.log.error(
+          { err: error, incidentId: incident.id },
+          "notification pipeline failed — SOS response unaffected",
+        );
+      });
+    }
 
     return { incident, created: result.created };
   }

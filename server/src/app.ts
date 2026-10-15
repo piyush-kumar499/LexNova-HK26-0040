@@ -5,6 +5,8 @@ import { buildLoggerOptions } from "./utils/logger.js";
 import { createDatabase, type Database } from "./services/supabase.service.js";
 import { DeviceService } from "./services/device.service.js";
 import { SosService } from "./services/sos.service.js";
+import { EscalationService } from "./services/escalation.service.js";
+import { createCallProvider, type CallProviderClient } from "./services/vapi.service.js";
 import { createDeviceAuth, createDeviceRateLimit } from "./middleware/deviceAuth.js";
 import { createRateLimiter, type RateLimiter } from "./middleware/rateLimit.js";
 import { registerErrorHandlers } from "./middleware/error.js";
@@ -22,6 +24,8 @@ export interface AppContext {
   log: FastifyBaseLogger;
   deviceService: DeviceService;
   sosService: SosService;
+  escalation: EscalationService;
+  callProvider: CallProviderClient;
   limiter: RateLimiter;
   /** Identity middleware: validates X-Device-Id, auto-registers, attaches request.device. */
   deviceAuth: preHandlerHookHandler;
@@ -49,7 +53,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const limiter = createRateLimiter(deps.config);
   const deviceService = new DeviceService(bundle.db);
   const deviceAuth = createDeviceAuth({ deviceService });
-  const sosService = new SosService(bundle.db, app.log);
+  const callProvider = createCallProvider(deps.config, app.log);
+  const escalation = new EscalationService(bundle.db, callProvider, app.log);
+  const sosService = new SosService(bundle.db, app.log, escalation);
 
   const ctx: AppContext = {
     config: deps.config,
@@ -57,6 +63,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     log: app.log,
     deviceService,
     sosService,
+    escalation,
+    callProvider,
     limiter,
     deviceAuth,
     deviceRateLimit: createDeviceRateLimit(limiter),

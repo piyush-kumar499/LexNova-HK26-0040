@@ -1,8 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { makeTestApp, VALID_DEVICE_ID, VALID_DEVICE_ID_2, VALID_DEVICE_ID_3, type TestApp } from "./helpers/setup.js";
+import { makeTestApp, waitFor, VALID_DEVICE_ID, VALID_DEVICE_ID_2, VALID_DEVICE_ID_3, type TestApp } from "./helpers/setup.js";
 
 const OWNER = { "x-device-id": VALID_DEVICE_ID };
 const OTHER = { "x-device-id": VALID_DEVICE_ID_2 };
+
+/** Waits for the async notification pipeline to reach HELP_REQUESTED. */
+async function waitForDispatch(db: TestApp["db"], incidentId: string): Promise<void> {
+  await waitFor(async () => (await db.getIncident(incidentId))?.status === "HELP_REQUESTED");
+}
 
 function sosBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -129,7 +134,8 @@ describe("SOS endpoints", () => {
 
     const stored = await db.findIncidentByClientRequestId(VALID_DEVICE_ID_2, "no-location-1");
     expect(stored).not.toBeNull();
-    expect(stored?.status).toBe("ACTIVE");
+    // ACTIVE at insert; the async pipeline may already advance it.
+    expect(["ACTIVE", "HELP_REQUESTED"]).toContain(stored?.status);
     expect(stored?.latitude).toBeNull();
   });
 
@@ -317,7 +323,7 @@ describe("SOS endpoints", () => {
 
     expect(res.statusCode).toBe(403);
     const stored = await db.getIncident(incidentId);
-    expect(stored?.status).toBe("ACTIVE");
+    expect(stored?.status).not.toBe("CANCELLED");
   });
 
   it("POST /sos/:id/cancel validates the body and the state machine", async () => {
@@ -371,8 +377,9 @@ describe("SOS endpoints", () => {
     expect(tooEarly.statusCode).toBe(409);
     expect(tooEarly.json().error.code).toBe("INVALID_STATE_TRANSITION");
 
-    // Simulate the notification pipeline and a first acceptance.
-    await db.updateIncident(incidentId, { status: "HELP_REQUESTED" });
+    // The async pipeline moves ACTIVE -> HELP_REQUESTED; then simulate a first
+    // acceptance (responder actions arrive in a later step).
+    await waitForDispatch(db, incidentId);
     await db.updateIncident(incidentId, { status: "RESPONDER_ACKNOWLEDGED" });
 
     const res = await app.inject({
@@ -394,7 +401,7 @@ describe("SOS endpoints", () => {
       payload: sosBody({ clientRequestId: "resolve-forbidden-1" }),
     });
     const incidentId = created.json().incident.id;
-    await db.updateIncident(incidentId, { status: "HELP_REQUESTED" });
+    await waitForDispatch(db, incidentId);
     await db.updateIncident(incidentId, { status: "RESPONDER_ACKNOWLEDGED" });
 
     const res = await app.inject({
