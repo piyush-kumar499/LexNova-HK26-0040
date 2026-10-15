@@ -129,34 +129,242 @@ The mock provider **never pretends a real call happened**: logs state it, stored
 carry `provider: "mock"`, and mock outcome reasons (`mock-silent-line`,
 `customer-did-not-answer`) make the simulation visible.
 
-## API surface
+## API reference
 
-All routes except `/health` and `/vapi/webhook` require the `X-Device-Id` header (UUID v4).
-Mutating routes are rate-limited per device; `/nearby/sos` polling is deliberately
-rate-limit exempt.
+Base URL: `http://localhost:8080`. All routes except `/health` and `/vapi/webhook` require
+the `X-Device-Id` header (UUID v4); unknown devices auto-register on their first request.
+Mutating routes are rate-limited **per device** (`RATE_LIMIT_MAX` per `RATE_LIMIT_WINDOW_MS`,
+default 30 per 60 s → `429 RATE_LIMITED` + `Retry-After`); `/nearby/sos` polling is
+deliberately exempt. All ids are UUIDs; all timestamps are ISO-8601 with timezone offset
+(e.g. `2026-10-15T09:30:00.000Z`). Every error has the same shape:
 
-```
-GET    /health                    liveness (no identity required)
-GET    /device/me                 profile of the calling device — unknown devices auto-register
-PATCH  /device/me                 displayName / phoneNumber / canRespond
-POST   /device/location           latest-location upsert (one row per device)
-GET    /contacts                  trusted contacts in call order (priority asc)
-POST   /contacts                  add trusted contact (phone normalized to +digits)
-DELETE /contacts/:contactId       remove trusted contact
-POST   /sos                       idempotent SOS creation (clientRequestId) — returns immediately
-GET    /sos/:incidentId           owner sees everything; responder only after ACCEPT (exact location, no evidence/calls)
-POST   /sos/:incidentId/cancel    false-alarm cancel (owner; ACTIVE/HELP_REQUESTED only)
-POST   /sos/:incidentId/resolve   resolve (owner; only after RESPONDER_ACKNOWLEDGED)
-POST   /sos/:incidentId/respond   responder step: ACCEPT / DECLINE / EN_ROUTE / ARRIVED / WITHDRAW
-GET    /nearby/sos                polling: active incidents nearby — distance rounded to 100 m, never coordinates
-POST   /vapi/webhook              Vapi webhook — signature-verified, acked fast, processed async
+```json
+{
+  "error": {
+    "code": "INVALID_STATE_TRANSITION",
+    "message": "Illegal incident transition: ACTIVE -> RESOLVED",
+    "details": { "from": "ACTIVE", "to": "RESOLVED" }
+  }
+}
 ```
 
-Escalation defaults (all in `.env`): level 1 calls trusted contacts in priority order; levels
-2–3 call nearby devices with phones inside an expanding radius (`NEARBY_RADIUS_METERS ×
-(level−1)`), with a watchdog after `SOS_ESCALATION_TIMEOUT_SECONDS` if a call never resolves.
-The chain stops the moment a responder accepts. When every level is exhausted, the audit log
-states that no emergency-service dispatch was attempted.
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | liveness — no identity required |
+| `GET` | `/device/me` | profile of the calling device — unknown devices auto-register |
+| `PATCH` | `/device/me` | update `displayName` / `phoneNumber` / `canRespond` (at least one) |
+| `POST` | `/device/location` | latest-location upsert — one row per device, feeds nearby queries |
+| `GET` | `/contacts` | trusted contacts in call order (priority asc) |
+| `POST` | `/contacts` | add trusted contact — phone normalized to `+digits`, duplicates → 409 |
+| `DELETE` | `/contacts/:contactId` | remove trusted contact → `204` |
+| `POST` | `/sos` | idempotent SOS creation (`clientRequestId`) — `201` new, `200` replay |
+| `GET` | `/sos/:incidentId` | incident detail, scoped per viewer (see below) |
+| `POST` | `/sos/:incidentId/cancel` | owner; false alarm — `ACTIVE`/`HELP_REQUESTED` only |
+| `POST` | `/sos/:incidentId/resolve` | owner; only after `RESPONDER_ACKNOWLEDGED` |
+| `POST` | `/sos/:incidentId/respond` | responder step: `ACCEPT` `DECLINE` `EN_ROUTE` `ARRIVED` `WITHDRAW` |
+| `GET` | `/nearby/sos` | polling: active incidents nearby — rounded distance, never coordinates |
+| `POST` | `/vapi/webhook` | Vapi call lifecycle — signature-verified, acked fast, processed async |
+
+### Examples
+
+**`GET /health`** → `200`
+
+```json
+{ "status": "ok", "time": "2026-10-15T09:30:00.000Z" }
+```
+
+**`GET /device/me`** → `200` (works on the very first request — the device is created here)
+
+```json
+{
+  "device": {
+    "deviceId": "6f9619ff-8b86-4d01-b42d-00cf4fc964ff",
+    "displayName": null,
+    "phoneNumber": null,
+    "canRespond": true,
+    "isActive": true,
+    "createdAt": "2026-10-15T09:29:58.000Z",
+    "updatedAt": "2026-10-15T09:29:58.000Z",
+    "lastSeenAt": "2026-10-15T09:29:58.000Z"
+  }
+}
+```
+
+**`PATCH /device/me`** — body (any subset, at least one field):
+
+```json
+{ "displayName": "Aarav", "phoneNumber": "+919812345678", "canRespond": true }
+```
+
+**`POST /device/location`** — body → `{ "status": "ok", "capturedAt": "…" }`:
+
+```json
+{
+  "latitude": 28.6139,
+  "longitude": 77.209,
+  "accuracy": 8.5,
+  "capturedAt": "2026-10-15T09:30:00.000Z"
+}
+```
+
+**`POST /contacts`** — body → `201 { "contact": { … } }`; a duplicate number → `409 CONTACT_EXISTS`:
+
+```json
+{ "contactName": "Aarav", "phoneNumber": "+91 98123-45678", "priority": 1 }
+```
+
+```json
+{
+  "contact": {
+    "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "contactName": "Aarav",
+    "phoneNumber": "+919812345678",
+    "priority": 1,
+    "createdAt": "2026-10-15T09:31:00.000Z",
+    "updatedAt": "2026-10-15T09:31:00.000Z"
+  }
+}
+```
+
+**`POST /sos`** — body → `201 { "incident": { … }, "created": true }`; the same
+`clientRequestId` again → `200` with the same incident and `"created": false` (offline
+queue replays land here). Coordinates are optional — without them the server falls back to
+the device's latest stored fix:
+
+```json
+{
+  "triggerType": "shake",
+  "latitude": 28.6139,
+  "longitude": 77.209,
+  "locationAccuracy": 8.5,
+  "deviceTimestamp": "2026-10-15T09:30:00.000Z",
+  "clientRequestId": "first-tap-001"
+}
+```
+
+```json
+{
+  "incident": {
+    "id": "b6e1cdc0-5f6c-4a5e-9c1a-2f5a19d3f7c2",
+    "status": "ACTIVE",
+    "triggerType": "shake",
+    "activatedAt": "2026-10-15T09:30:00.000Z",
+    "deviceTimestamp": "2026-10-15T09:30:00.000Z",
+    "escalationLevel": 1,
+    "clientRequestId": "first-tap-001",
+    "cancelReason": null,
+    "resolutionReason": null,
+    "cancelledAt": null,
+    "resolvedAt": null,
+    "createdAt": "2026-10-15T09:30:01.000Z",
+    "updatedAt": "2026-10-15T09:30:01.000Z"
+  },
+  "created": true
+}
+```
+
+**`GET /sos/:incidentId`** — owner view. A responder sees the same shape but always with
+`"evidence": []` and `"calls": []`, and gets it only after ACCEPT (before that:
+`403 RESPONDER_NOT_ACCEPTED`; no relationship at all: `403 FORBIDDEN`):
+
+```json
+{
+  "incident": { "…": "incident core as above", "status": "HELP_REQUESTED", "escalationLevel": 1 },
+  "location": { "latitude": 28.6139, "longitude": 77.209, "accuracy": 8.5 },
+  "evidence": [],
+  "responders": [],
+  "calls": [],
+  "viewer": { "role": "OWNER" }
+}
+```
+
+**`POST /sos/:incidentId/cancel`** — body `{ "reason": "accidental press" }`;
+**`POST /sos/:incidentId/resolve`** — body `{ "resolutionReason": "helped, safe now" }`.
+Both return `{ "incident": { … } }`; illegal moves are `409 INVALID_STATE_TRANSITION`.
+
+**`POST /sos/:incidentId/respond`** — body `{ "action": "ACCEPT" }` → `200`:
+
+```json
+{
+  "incident": { "…": "incident core", "status": "RESPONDER_ACKNOWLEDGED" },
+  "responder": {
+    "deviceId": "3c9f1c2e-6d4b-4f0a-8e2a-71b0a2c4d9e1",
+    "status": "ACCEPTED",
+    "distanceAtNotifyM": 321.4,
+    "notifiedAt": "2026-10-15T09:30:05.000Z",
+    "acceptedAt": "2026-10-15T09:30:12.000Z",
+    "enRouteAt": null,
+    "arrivedAt": null,
+    "declinedAt": null,
+    "withdrawnAt": null
+  }
+}
+```
+
+Only devices recorded as `NOTIFIED` for the incident may respond — membership cannot be
+forged from the client (`403 NOT_A_RESPONDER`); only legal steps are allowed
+(`409 INVALID_RESPONDER_TRANSITION`); a closed incident is `409 INCIDENT_CLOSED`.
+Accepting does **not** mean arrival — each step has its own timestamp.
+
+**`GET /nearby/sos`** — `?latitude=…&longitude=…`, or the device's latest stored fix.
+No coordinates to the caller, ever — distance is rounded to 100 m:
+
+```json
+{
+  "incidents": [
+    {
+      "incidentId": "b6e1cdc0-5f6c-4a5e-9c1a-2f5a19d3f7c2",
+      "status": "HELP_REQUESTED",
+      "triggerType": "shake",
+      "approximateDistanceM": 300,
+      "activatedAt": "2026-10-15T09:30:00.000Z",
+      "responderStatus": "NOTIFIED"
+    }
+  ],
+  "locationSource": "request"
+}
+```
+
+Polling registers the caller as `NOTIFIED` for each returned incident — that membership is
+what makes a later `ACCEPT` a legal transition. No stored fix and no query params →
+`400 LOCATION_REQUIRED`; `canRespond: false` → `403 RESPONDER_DISABLED`.
+
+**`POST /vapi/webhook`** — verified against the configured secret (unsigned or invalid →
+`401 INVALID_WEBHOOK_SIGNATURE`), always answered immediately while processing continues in
+the background:
+
+```json
+{ "received": true }
+```
+
+### Common error codes
+
+| Code | HTTP | Meaning |
+| --- | --- | --- |
+| `MISSING_DEVICE_ID` | 400 | `X-Device-Id` header absent or blank |
+| `INVALID_DEVICE_ID` | 400 | header present but not a UUID v4 |
+| `DEVICE_INACTIVE` | 403 | device has been deactivated |
+| `VALIDATION_ERROR` | 400 | body/query fails the Zod schema (details included) |
+| `RATE_LIMITED` | 429 | per-device limit hit — `Retry-After` header set |
+| `INCIDENT_NOT_FOUND` | 404 | unknown or malformed incident id |
+| `INVALID_STATE_TRANSITION` | 409 | illegal SOS state move (details: from/to) |
+| `INCIDENT_CLOSED` | 409 | incident is `RESOLVED`/`CANCELLED` |
+| `NOT_A_RESPONDER` | 403 | device was never notified for this incident |
+| `RESPONDER_NOT_ACCEPTED` | 403 | membership exists but has not ACCEPTED yet |
+| `INVALID_RESPONDER_TRANSITION` | 409 | illegal responder step (details: from/to) |
+| `CONTACT_EXISTS` | 409 | phone number already saved (after normalization) |
+| `CONTACT_NOT_FOUND` | 404 | unknown or malformed contact id |
+| `RESPONDER_DISABLED` | 403 | `canRespond` is off |
+| `LOCATION_REQUIRED` | 400 | no coordinates in the request and none stored |
+| `INVALID_WEBHOOK_SIGNATURE` | 401 | Vapi webhook failed signature verification |
+
+### Escalation defaults
+
+Level 1 calls trusted contacts in priority order; levels 2–3 call nearby devices with
+phones inside an expanding radius (`NEARBY_RADIUS_METERS × (level−1)`), with a watchdog after
+`SOS_ESCALATION_TIMEOUT_SECONDS` if a call never resolves. The chain stops the moment a
+responder accepts. When every level is exhausted, the audit log states that no
+emergency-service dispatch was attempted.
 
 ## Tests
 

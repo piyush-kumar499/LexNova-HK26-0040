@@ -154,6 +154,9 @@ All routes except `/health` and `/vapi/webhook` require the `X-Device-Id` header
 routes are rate-limited per device, and `/nearby/sos` polling is deliberately exempt —
 frequent polling is the designed use, and its only write is an idempotent membership insert.
 
+Full request/response reference for every endpoint — examples and the common error codes:
+[`server/README.md`](server/README.md) → *API reference*.
+
 ---
 
 ## 5. SOS workflow and incident state machine
