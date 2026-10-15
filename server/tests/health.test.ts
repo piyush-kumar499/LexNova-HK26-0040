@@ -1,10 +1,8 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { buildApp } from "../src/app.js";
-import { makeTestConfig } from "./helpers/setup.js";
+import { makeTestApp } from "./helpers/setup.js";
 
 describe("GET /health", () => {
-  const config = makeTestConfig();
-  const app = buildApp({ config });
+  const { app } = makeTestApp();
 
   afterAll(async () => {
     await app.close();
