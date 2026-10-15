@@ -235,3 +235,10 @@ export const resolveSosSchema = z
   .strict();
 
 export type ResolveSosInput = z.infer<typeof resolveSosSchema>;
+
+/** POST /sos/:incidentId/respond — one deliberate step per action. */
+export const respondSosSchema = z
+  .object({ action: z.enum(RESPONDER_ACTIONS) })
+  .strict();
+
+export type RespondSosInput = z.infer<typeof respondSosSchema>;

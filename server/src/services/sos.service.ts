@@ -5,13 +5,18 @@ import type {
   IncidentEvidenceRow,
   IncidentResponderRow,
   ResolveSosInput,
+  ResponderAction,
   ResponderStatus,
   SosIncidentRow,
 } from "../models/sos.model.js";
-import { assertIncidentTransition } from "../models/sos.model.js";
+import {
+  ACTION_TO_STATUS,
+  assertIncidentTransition,
+  assertResponderTransition,
+} from "../models/sos.model.js";
 import type { Database } from "./supabase.service.js";
 import { findOrCreate } from "../middleware/idempotency.js";
-import { forbidden, notFound } from "../utils/errors.js";
+import { conflict, forbidden, notFound } from "../utils/errors.js";
 
 export interface CreateSosResult {
   incident: SosIncidentRow;
@@ -25,6 +30,11 @@ export interface CreateSosResult {
  */
 export interface IncidentNotifier {
   startForIncident(incident: SosIncidentRow): Promise<void>;
+  /**
+   * Optional: called when a responder withdraws after accepting, so the
+   * escalation chain can resume if nobody else is on the way.
+   */
+  resumeAfterWithdrawal?(incidentId: string): Promise<void>;
 }
 
 /** Fields safe to reveal about an incident to someone who can see it at all. */
@@ -75,7 +85,7 @@ export interface IncidentView {
   viewer: { role: "OWNER" | "RESPONDER"; responderStatus?: ResponderStatus };
 }
 
-interface ResponderView {
+export interface ResponderView {
   deviceId: string;
   status: ResponderStatus;
   distanceAtNotifyM: number | null;
@@ -87,7 +97,7 @@ interface ResponderView {
   withdrawnAt: string | null;
 }
 
-function toResponderView(row: IncidentResponderRow): ResponderView {
+export function toResponderView(row: IncidentResponderRow): ResponderView {
   return {
     deviceId: row.device_id,
     status: row.status,
@@ -265,6 +275,127 @@ export class SosService {
       calls: [],
       viewer: { role: "RESPONDER", responderStatus: membership.status },
     };
+  }
+
+  /**
+   * Responder action (spec §9, §11): one deliberate step per request —
+   * ACCEPT / DECLINE / EN_ROUTE / ARRIVED / WITHDRAW. Only devices that were
+   * notified for this incident may respond, and only via legal transitions.
+   * The first ACCEPT moves the incident to RESPONDER_ACKNOWLEDGED.
+   */
+  async respond(
+    deviceId: string,
+    incidentId: string,
+    action: ResponderAction,
+  ): Promise<{ incident: SosIncidentRow; responder: IncidentResponderRow }> {
+    const incident = await this.db.getIncident(incidentId);
+    if (!incident) throw notFound("INCIDENT_NOT_FOUND", "Incident not found");
+
+    if (incident.status === "RESOLVED" || incident.status === "CANCELLED") {
+      throw conflict(
+        "INCIDENT_CLOSED",
+        `Incident is already ${incident.status.toLowerCase()}`,
+        { status: incident.status },
+      );
+    }
+
+    const membership = await this.db.getIncidentResponder(incidentId, deviceId);
+    if (!membership) {
+      throw forbidden(
+        "NOT_A_RESPONDER",
+        "You were not notified for this incident",
+      );
+    }
+
+    const targetStatus = ACTION_TO_STATUS[action];
+    assertResponderTransition(membership.status, targetStatus);
+
+    const now = new Date().toISOString();
+    const patch: Parameters<Database["updateIncidentResponder"]>[2] = {
+      status: targetStatus,
+    };
+    if (action === "ACCEPT") patch.accepted_at = now;
+    if (action === "DECLINE") patch.declined_at = now;
+    if (action === "EN_ROUTE") patch.en_route_at = now;
+    if (action === "ARRIVED") patch.arrived_at = now;
+    if (action === "WITHDRAW") patch.withdrawn_at = now;
+
+    const responder = await this.db.updateIncidentResponder(incidentId, deviceId, patch);
+
+    await this.db.appendResponderEvent({
+      incidentId,
+      deviceId,
+      eventType: `responder.${action.toLowerCase()}`,
+      metadata: { fromStatus: membership.status, toStatus: targetStatus },
+    });
+    await this.db.appendAuditLog({
+      deviceId,
+      incidentId,
+      eventType: "sos.responder_action",
+      data: { action, fromStatus: membership.status, toStatus: targetStatus },
+    });
+
+    let updatedIncident = incident;
+    if (action === "ACCEPT" && incident.status !== "RESPONDER_ACKNOWLEDGED") {
+      updatedIncident = await this.markAcknowledged(incident);
+    }
+    if (action === "DECLINE") {
+      await this.markRecipientDeclined(incidentId, deviceId);
+    }
+    if (action === "WITHDRAW") {
+      const notifier = this.notifier;
+      if (notifier?.resumeAfterWithdrawal) {
+        void notifier.resumeAfterWithdrawal(incidentId).catch((error: unknown) => {
+          this.log.error(
+            { err: error, incidentId },
+            "escalation resume after withdrawal failed",
+          );
+        });
+      }
+    }
+
+    this.log.info(
+      { incidentId, deviceId, action, fromStatus: membership.status, toStatus: targetStatus },
+      "responder action recorded",
+    );
+    return { incident: updatedIncident, responder };
+  }
+
+  /** First ACCEPT: HELP_REQUESTED -> RESPONDER_ACKNOWLEDGED (spec §9). */
+  private async markAcknowledged(incident: SosIncidentRow): Promise<SosIncidentRow> {
+    let current = incident;
+    if (current.status === "ACTIVE") {
+      // The async notification pipeline hasn't flipped it yet — an explicit
+      // acceptance is stronger, record both transitions honestly.
+      assertIncidentTransition(current.status, "HELP_REQUESTED");
+      current = await this.db.updateIncident(current.id, { status: "HELP_REQUESTED" });
+    }
+    if (current.status === "HELP_REQUESTED") {
+      assertIncidentTransition(current.status, "RESPONDER_ACKNOWLEDGED");
+      current = await this.db.updateIncident(current.id, {
+        status: "RESPONDER_ACKNOWLEDGED",
+      });
+      await this.db.appendAuditLog({
+        deviceId: current.device_id,
+        incidentId: current.id,
+        eventType: "sos.responder_acknowledged",
+        data: { note: "first responder accepted" },
+      });
+      this.log.info({ incidentId: current.id }, "incident: HELP_REQUESTED -> RESPONDER_ACKNOWLEDGED");
+    }
+    return current;
+  }
+
+  /** A declined nearby device marks its call-recipient rows as DECLINED. */
+  private async markRecipientDeclined(incidentId: string, deviceId: string): Promise<void> {
+    const reference = `device:${deviceId}`;
+    const recipients = await this.db.listIncidentRecipients(incidentId);
+    for (const recipient of recipients) {
+      if (recipient.recipient_type !== "nearby_device") continue;
+      if (recipient.recipient_reference !== reference) continue;
+      if (recipient.delivery_status === "DECLINED") continue;
+      await this.db.updateIncidentRecipient(recipient.id, { delivery_status: "DECLINED" });
+    }
   }
 
   /** Cancel (false alarm) — owner only, ACTIVE/HELP_REQUESTED only. */

@@ -25,6 +25,7 @@ import { deviceRoutes } from "./routes/device.js";
 import { sosRoutes } from "./routes/sos.js";
 import { vapiRoutes } from "./routes/vapi.js";
 import { nearbyRoutes } from "./routes/nearby.js";
+import { contactsRoutes } from "./routes/contacts.js";
 
 /**
  * Shared context handed to route registrars. Grows as features land
@@ -129,6 +130,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   sosRoutes(app, ctx);
   vapiRoutes(app, ctx);
   nearbyRoutes(app, ctx);
+  contactsRoutes(app, ctx);
 
   app.addHook("onClose", async () => {
     escalation.stop();

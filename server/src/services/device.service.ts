@@ -1,6 +1,6 @@
-import type { DeviceRow } from "../models/device.model.js";
+import type { CreateContactInput, DeviceRow, TrustedContactRow } from "../models/device.model.js";
 import type { Database } from "./supabase.service.js";
-import { badRequest, isUniqueViolation } from "../utils/errors.js";
+import { badRequest, conflict, isUniqueViolation, notFound } from "../utils/errors.js";
 
 const LAST_SEEN_THROTTLE_MS = 60_000;
 
@@ -80,5 +80,39 @@ export class DeviceService {
     }
 
     return this.db.updateDevice(deviceId, dbPatch);
+  }
+
+  /** Trusted contacts, in the order they will be called (priority asc). */
+  async listContacts(deviceId: string): Promise<TrustedContactRow[]> {
+    return this.db.listTrustedContacts(deviceId);
+  }
+
+  /**
+   * Adds a trusted contact. Phone numbers are normalized to +digits so the
+   * same human cannot be dialed twice via different formats (spec §7).
+   */
+  async createContact(deviceId: string, input: CreateContactInput): Promise<TrustedContactRow> {
+    const phoneNumber = normalizePhoneNumber(input.phoneNumber);
+    try {
+      return await this.db.createTrustedContact({
+        deviceId,
+        contactName: input.contactName,
+        phoneNumber,
+        priority: input.priority ?? 10,
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw conflict(
+          "CONTACT_EXISTS",
+          "This phone number is already one of your trusted contacts",
+        );
+      }
+      throw error;
+    }
+  }
+
+  async deleteContact(deviceId: string, contactId: string): Promise<void> {
+    const deleted = await this.db.deleteTrustedContact(deviceId, contactId);
+    if (!deleted) throw notFound("CONTACT_NOT_FOUND", "Contact not found");
   }
 }
