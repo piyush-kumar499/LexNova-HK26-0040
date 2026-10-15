@@ -71,3 +71,14 @@ export const updateLocationSchema = z
   .strict();
 
 export type UpdateLocationInput = z.infer<typeof updateLocationSchema>;
+
+/** POST /contacts — trusted contact of the calling device. */
+export const createContactSchema = z
+  .object({
+    contactName: z.string().trim().min(1).max(80),
+    phoneNumber: phoneNumberSchema,
+    priority: z.number().int().min(1).max(100).optional(),
+  })
+  .strict();
+
+export type CreateContactInput = z.infer<typeof createContactSchema>;

@@ -5,8 +5,9 @@ import {
   cancelSosSchema,
   createSosSchema,
   resolveSosSchema,
+  respondSosSchema,
 } from "../models/sos.model.js";
-import { toIncidentCore } from "../services/sos.service.js";
+import { toIncidentCore, toResponderView } from "../services/sos.service.js";
 import { isUuid } from "../utils/crypto.js";
 import { notFound } from "../utils/errors.js";
 import { parseOrThrow } from "../utils/validate.js";
@@ -66,6 +67,22 @@ export function sosRoutes(app: FastifyInstance, ctx: AppContext): void {
       const input = parseOrThrow(resolveSosSchema, request.body);
       const incident = await ctx.sosService.resolve(device.device_id, incidentId, input);
       return { incident: toIncidentCore(incident) };
+    },
+  );
+
+  app.post(
+    "/sos/:incidentId/respond",
+    { preHandler: [ctx.deviceAuth, ctx.deviceRateLimit] },
+    async (request) => {
+      const device = request.device as DeviceRow;
+      const incidentId = incidentIdParam(request.params);
+      const input = parseOrThrow(respondSosSchema, request.body);
+      const { incident, responder } = await ctx.sosService.respond(
+        device.device_id,
+        incidentId,
+        input.action,
+      );
+      return { incident: toIncidentCore(incident), responder: toResponderView(responder) };
     },
   );
 }

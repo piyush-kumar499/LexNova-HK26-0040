@@ -84,6 +84,25 @@ export class EscalationService implements IncidentNotifier {
   }
 
   /**
+   * Resumes the chain after the responder who was handling the incident
+   * withdrew. The withdrawal does not erase who was already called — the
+   * chain continues from the last attempt at the incident's current level.
+   */
+  async resumeAfterWithdrawal(incidentId: string): Promise<void> {
+    const incident = await this.db.getIncident(incidentId);
+    if (!incident) return;
+    if (!(await this.shouldContinueEscalation(incident))) return;
+
+    const level = incident.escalation_level >= 1 ? incident.escalation_level : 1;
+    const frontier = await this.lastAttemptedReference(incidentId, level);
+    this.log.info(
+      { incidentId, level, after: frontier },
+      "escalation: responder withdrew — resuming chain",
+    );
+    await this.continueChain(incidentId, level, frontier);
+  }
+
+  /**
    * Boot rehydration (spec §10): resumes incidents that were open when the
    * process last stopped. Idempotent — recipients already attempted are never
    * called twice; in-flight attempts get a fresh watchdog for the remaining
