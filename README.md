@@ -12,26 +12,31 @@ type.
 
 ## 1. Current status — read this first
 
-**This repository currently contains documentation only.** No application code, migrations,
-or tests have been committed yet. Every row below marked ⬜ is a target from the project
-specification, not delivered work.
+**The server foundation is implemented and covered by automated tests** (`server/`, Node +
+TypeScript + Fastify). The Android app has not been started. Every row marked ⬜ is a target
+from the project specification, or planned work, not delivered yet.
 
 | Area | Status |
 | --- | --- |
 | Project specification captured, architecture and security model documented | ✅ this document |
-| Kotlin / Jetpack Compose Android project | ⬜ not started |
-| Supabase schema migrations, RLS policies, Storage policies | ⬜ not drafted |
-| SOS state machine | ⬜ designed here, not implemented |
-| Dynamic per-incident role model (§6) | ⬜ designed here, not implemented |
+| Server foundation: Fastify app, strict config validation, health endpoint, error taxonomy, structured logging | ✅ `server/src` |
+| Device-based identity (`X-Device-Id`, auto-registration, no login) | ✅ implemented + tests |
+| Device profile + location endpoints | ✅ implemented + tests |
+| SOS incidents: create / read / cancel / resolve, idempotent creation, server-validated state machine | ✅ implemented + tests |
+| Per-viewer scoping: owner vs responder, exact location only after `ACCEPTED` | ✅ implemented + tests |
+| Rate limiting, duplicate-tap protection, append-only audit log | ✅ implemented + tests |
+| Supabase migrations: schema, PostGIS functions, RLS | ✅ written (`server/migrations/`) — applying them to a hosted project is a setup step (§13) |
+| Trusted-contact storage + escalation dialing to contacts (mock-first Vapi adapter) | ✅ calls; ⬜ HTTP CRUD endpoints for contacts |
+| Vapi webhook: signature verification, status / transcript / recording intake, delivery truth, no-answer → next contact | ✅ implemented + tests |
+| Nearby discovery (PostGIS + in-memory equivalent) and responder membership tables | ✅ data layer; ⬜ HTTP flows (notify / accept / decline) |
 | Emergency intelligence engine on **Groq** (§10) | ⬜ specified here, not implemented |
-| SOS voice uplink to the Vapi number, incl. silent-listen mode (§11) | ⬜ specified here, not implemented |
-| Shake / location / camera modules | ⬜ not started |
-| Nearby-responder discovery (PostGIS) | ⬜ not started |
-| Unit + authorization tests | ⬜ not written |
-| FCM, Vapi + telephony number, WebRTC, Maps, Groq | ⬜ external — need credentials/authorization (§9) |
+| Kotlin / Jetpack Compose Android app — incl. SOS voice dial-out (§11), shake, camera, UI | ⬜ not started |
+| FCM push, real Vapi number, WebRTC, Maps, Groq credentials | ⬜ external — need credentials/authorization (§9) |
 
-Nothing in this README should be read as "this works". It describes what will be built and
-how it must behave.
+The server test suite runs entirely on mocks — no Supabase project, no API keys, and no real
+calls are needed: `cd server && npm test`. No feature above is "done" in the product sense:
+nothing is deployed, there is no end-to-end app, and no real provider call has ever been
+placed. Nothing in this README should be read as "this works" in production.
 
 ---
 
@@ -41,7 +46,8 @@ Existing safety apps treat the person in danger as passive and the responder as 
 pre-registered role. Real emergencies do not respect that split: the person who helps today
 may need help tomorrow. LexNova therefore:
 
-- makes **every authenticated user** both a potential requester and a potential responder;
+- makes **every user — identified by their device, no signup** — both a potential requester
+  and a potential responder;
 - authorizes information **per incident**, not per account type;
 - keeps precise location and media private by default;
 - records an audit trail so no claim of "police notified" is made without confirmation.
@@ -56,10 +62,11 @@ unfinished features.**
 | Layer | Choice | Notes |
 | --- | --- | --- |
 | Mobile app | Kotlin, Jetpack Compose, Material 3 | MVVM, Coroutines + Flow, Navigation Compose |
+| Backend service | Node.js 20+, Fastify 5, TypeScript (strict), Zod, Vitest, pino | **Implemented** in `server/` — the privileged backend today: API, validation, calling, webhooks |
 | Device capabilities | Android Sensor API (shake), Fused Location Provider, CameraX, audio APIs, telephony (`Intent.ACTION_CALL` / `ACTION_DIAL`) | Permissions handled explicitly, no background-execution workarounds. Telephony constraints in §11 |
-| Backend platform | Supabase: PostgreSQL, Auth, Storage, Realtime | Primary database and auth authority |
+| Backend platform | Supabase: PostgreSQL + PostGIS | Primary database — accessed **only by the server** (service role). Supabase Auth is not used (identity is device-based, §5); Storage/Realtime are planned |
 | Geospatial | PostGIS | Radius-based nearby-user discovery |
-| Privileged operations | Supabase Edge Functions, or a Python FastAPI service | Server-side validation and trusted dispatch |
+| Privileged operations | The Node server in `server/` (service-role key held server-side) | Supabase Edge Functions or a FastAPI service remain an option, but are not needed yet |
 | Notifications | Firebase Cloud Messaging | Planned — later phase |
 | Voice/AI calls | Vapi | Planned — backend-initiated, plus the SOS voice uplink in §11 |
 | LLM for emergency analysis | **Groq** (OpenAI-compatible endpoint or official SDK) | Primary and only provider. Google Gemini is **not** used anywhere in this design |
@@ -69,21 +76,20 @@ unfinished features.**
 Constraints from the specification: no Flutter or React Native replacement; Supabase remains
 the primary database and backend.
 
-**Dependency versions:** pinned at first scaffold in `gradle/libs.versions.toml` (and the
-backend manifest at `services/`). They are not listed here because nothing has been resolved
-or built yet — when the project is created, the file becomes the source of truth and this
-section links to it.
+**Dependency versions:** the server pins its versions in `server/package.json` +
+`server/package-lock.json` — those files are the source of truth for the backend. The
+Android side will pin versions in `gradle/libs.versions.toml` at first scaffold.
 
 ---
 
 ## 4. Project layout
 
-Planned package/module boundaries (Android), one per responsibility:
+Planned Android package boundaries (not started) and the implemented server layout:
 
 ```
-app/
-  auth/          session, sign-in, profile bootstrap
-  home/          post-login landing, permission state
+app/                            # planned — Android app
+  auth/          device identity bootstrap (no login — X-Device-Id), profile setup
+  home/          landing after device bootstrap, permission state
   sos/           activation, incident state machine, cancel/resolve
   sensors/       shake detection + false-positive protection
   location/      permission flow, fixes, last-known-location
@@ -96,22 +102,47 @@ app/
   checkin/       safety check-in
   maps/          mapping surface
   settings/      shake sensitivity, false-alarm handling, privacy + voice-uplink toggles
-  data/          repositories, Supabase clients, DTOs
+  data/          repositories, server API client, DTOs
   domain/        models, use cases, state machines
   security/      authorization helpers, token/secret guards
   core/          DI, logging, error taxonomy, utilities
-supabase/
-  migrations/    version-controlled SQL (schema, indexes, RLS, storage)
-  functions/     privileged edge functions: incident write, escalation, Vapi webhook
-                 verification, Groq analysis trigger (§10-§11)
-services/        optional FastAPI service: triage rules, Groq analysis worker, transcript intake
-tests/           unit, state-machine, authorization, provider mocks (§10.4, §11.4)
-.env.example     placeholders only — GROQ_API_KEY, GROQ_MODEL, Vapi keys (§13)
+server/                         # implemented — Node + Fastify backend
+  src/app.ts        Fastify assembly: plugins, raw-body capture, routes
+  src/config/       environment parsing + validation (Zod), production guards
+  src/middleware/   device identity, per-device rate limiting, error shape, idempotency
+  src/models/       request schemas + row models, incident/responder state machines
+  src/routes/       health · device · sos · vapi webhook
+  src/services/     sos, device, escalation, vapi (mock + REST adapter), supabase,
+                    in-memory database (development fallback)
+  src/utils/        crypto (HMAC, constant-time compare), errors, logger
+  migrations/       0001 schema · 0002 PostGIS functions · 0003 RLS — version-controlled SQL
+  tests/            Vitest suite — mock-first, no keys required (§14)
+  .env.example      placeholders only — Supabase, Vapi, ngrok, limits (§13)
+
+supabase/         # planned — edge functions only if privileged work outgrows the server
+gradle/           # planned — Android dependency pins at first scaffold
 ```
 
 Repositories + dependency injection, typed models, and strict separation of UI, business
 logic, and data access. The LLM never runs on-device and the analysis engine is a backend
 component: no model key, transcript text, or raw audio is handled inside the APK.
+
+### Server API implemented today
+
+```
+GET   /health                    liveness (no identity required)
+GET   /device/me                 profile of the calling device — unknown devices auto-register
+PATCH /device/me                 displayName / phoneNumber / canRespond
+POST  /device/location           latest location upsert (feeds nearby queries; one row per device)
+POST  /sos                       idempotent SOS creation (clientRequestId); returns immediately
+GET   /sos/:incidentId           owner sees the full view; responder scoped, location only after ACCEPTED
+POST  /sos/:incidentId/cancel    false-alarm cancel (owner; ACTIVE/HELP_REQUESTED only)
+POST  /sos/:incidentId/resolve   resolve (owner; only after RESPONDER_ACKNOWLEDGED)
+POST  /vapi/webhook              provider webhook — signature-verified, acked fast, processed async
+```
+
+All routes except `/health` and `/vapi/webhook` require the `X-Device-Id` header; mutating
+routes are rate-limited per device.
 
 ---
 
@@ -119,7 +150,8 @@ component: no model key, transcript text, or raw audio is handled inside the APK
 
 Foundation flow:
 
-1. User signs in.
+1. Device registers automatically on first launch (device-based identity — no login; the app
+   generates a UUID v4 and sends it as `X-Device-Id`).
 2. User grants required permissions.
 3. User configures trusted emergency contacts.
 4. User activates SOS via the prominent button (shake trigger is optional and configurable,
@@ -164,7 +196,7 @@ with no profile change.
 
 | # | Behavior |
 | --- | --- |
-| 1 | Every authenticated user can activate SOS, subject to safety controls |
+| 1 | Every registered device can activate SOS, subject to safety controls |
 | 2 | On SOS creation, the system identifies eligible nearby users from their latest permitted location, availability, and proximity |
 | 3 | Eligible users get an assist request notification |
 | 4 | The user accepts or declines — no prior helper registration required |
@@ -177,11 +209,12 @@ with no profile change.
 
 ### 6.2 Statuses — tracked separately, never merged
 
-SOS owner status:
+Sos owner status (matches the incident state machine of §5 and the implementation):
 
 ```
-REQUESTING_HELP → HELP_RECEIVED → RESOLVED
-                                  ↘ CANCELLED
+ACTIVE → HELP_REQUESTED → RESPONDER_ACKNOWLEDGED → RESOLVED
+   │            │
+   └────────────┴──→ CANCELLED (false alarm)
 ```
 
 Per-incident responder status (a separate membership record, one row per user per incident):
@@ -197,27 +230,30 @@ successfully helped. These are distinct events and are stored and reported as su
 
 ### 6.3 Data model for roles
 
-Membership lives in an incident-specific responder table, not in `profiles`:
+Membership lives in an incident-specific responder table, not in `devices`:
 
 ```
 incident_responders
   incident_id     → sos_incidents.id
-  responder_id    → auth.users.id
+  device_id       → devices.device_id
   status          → NOTIFIED | ACCEPTED | DECLINED | EN_ROUTE | ARRIVED | WITHDRAWN
-  notified_at, accepted_at, arrived_at, withdrawn_at
-  eligibility_source (radius, distance_at_notify, policy_version)
-  granted_scope   → which fields this responder may read for this incident
-  pk (incident_id, responder_id)
+  distance_at_notify_m
+  notified_at, accepted_at, declined_at, en_route_at,
+  arrived_at, withdrawn_at
+  pk (incident_id, device_id)
 ```
 
 Responder activity is appended to `responder_events` (append-only audit). Authorization is
-enforced by RLS policies keyed on membership plus backend checks. A role supplied by the
-client — a role string, a user ID, an incident ID claimed as "mine" — is never trusted; it is
-always re-derived server-side from the authenticated principal and the membership row.
+enforced server-side against the membership row — the app never queries the database and RLS
+is deny-all (§8). Field scope is fixed server logic today (the owner sees the full incident;
+an accepted responder gets exact location but never evidence or call detail); a configurable
+per-responder scope is not built. A role supplied by the client — a role string, a device ID,
+an incident ID claimed as "mine" — is never trusted; it is always re-derived server-side from
+the authenticated device and the membership row.
 
 ### 6.4 Abuse prevention
 
-- authenticated users + server-side authorization on every read/write;
+- device-authenticated requests + server-side authorization on every read/write;
 - rate limiting and duplicate-alert protection on SOS creation and escalation;
 - incident audit log for security-relevant actions;
 - precise location never broadcast area-wide; disclosure is per authorized responder;
@@ -231,24 +267,29 @@ always re-derived server-side from the authenticated principal and the membershi
 
 ## 7. Database (Supabase PostgreSQL + PostGIS)
 
-Version-controlled migrations for:
+Version-controlled migrations exist: `server/migrations/0001_init.sql` (schema + indexes),
+`0002_functions.sql` (PostGIS RPC functions), `0003_rls.sql` (deny-all RLS, §8).
 
 | Table | Purpose | Key fields |
 | --- | --- | --- |
-| `profiles` | app-visible identity | `id`, `display_name`, `phone_number` (only if required), `created_at`, `updated_at` |
-| `trusted_contacts` | owner's emergency contacts | `id`, `owner_id`, `contact_name`, `phone_number`, `notification_preferences`, `created_at` |
-| `sos_incidents` | the incident record | `id`, `user_id`, `status`, `trigger_type`, `latitude`, `longitude`, `location_accuracy`, `activated_at`, `last_location_at`, `resolved_at`, `resolution_reason`, `created_at` |
-| `incident_evidence` | media metadata | `id`, `incident_id`, `owner_id`, `storage_path`, `media_type`, `captured_at`, `upload_status`, `retention_until`, `created_at` |
-| `incident_recipients` | notification targets + delivery truth | `id`, `incident_id`, `recipient_type`, `recipient_reference`, `delivery_status`, `acknowledged_at`, `created_at` |
-| `responder_events` | append-only responder audit | `id`, `incident_id`, `responder_id`, `event_type`, `event_metadata`, `created_at` |
-| `call_events` | provider call truth | `id`, `incident_id`, `provider`, `call_reference`, `call_status`, `started_at`, `ended_at`, `created_at` |
-| `incident_responders` | §6 per-incident membership/role | see §6.3 |
+| `devices` | the identity — one row per physical device | `device_id` (uuid, unique), `display_name`, `phone_number`, `can_respond`, `is_active`, `last_seen_at` |
+| `device_locations` | latest location only — one row per device, upserted in place | `device_id` (unique FK), `location` (`geography(Point,4326)`, GiST index), `accuracy`, `captured_at` |
+| `trusted_contacts` | contacts called on SOS, in priority order | `id`, `device_id`, `contact_name`, `phone_number`, `priority`, unique `(device_id, phone_number)` |
+| `sos_incidents` | the incident record | `id`, `device_id`, `status` (state machine, §5), `trigger_type`, `latitude` / `longitude` / `location_accuracy`, `device_timestamp`, `activated_at`, `escalation_level`, `client_request_id` — unique per device (idempotency) |
+| `incident_evidence` | provider media references (no re-hosted copies) | `id`, `incident_id`, `kind` (`call_recording` / `call_transcript`), `storage_ref`, `media_type`, `captured_at` |
+| `incident_recipients` | notification targets + delivery truth | `id`, `incident_id`, `recipient_type`, `recipient_reference`, `level`, `delivery_status`, `provider_reference`, `acknowledged_at` |
+| `incident_responders` | §6 per-incident membership — this *is* the role | pk `(incident_id, device_id)`, `status`, `distance_at_notify_m`, lifecycle timestamps |
+| `responder_events` | append-only responder audit | `id`, `incident_id`, `device_id`, `event_type`, `event_metadata` |
+| `call_events` | provider call truth (`vapi` or `mock`) | `id`, `incident_id`, `provider`, `call_reference` (unique), `idempotency_key` (unique), `recipient_reference`, `level`, `status`, timing, `recording_ref`, `transcript`, `raw_event` |
+| `audit_logs` | append-only security/lifecycle audit — deliberately no foreign keys | `id`, `device_id`, `incident_id`, `event_type`, `event_data` |
 
 All identifiers are UUIDs. Foreign keys, check constraints on enum-like fields, `updated_at`
-triggers, and PostGIS `geography` columns with spatial indexes are part of the migrations.
+triggers, and PostGIS `geography` columns with spatial indexes are in `0001_init.sql`. There is
+intentionally **no role column anywhere** — role is derived per incident (§6).
 
-Minimization: no unnecessary sensitive data; precise coordinates and media collected only as
-needed; retention windows enforced (`retention_until`) with a documented deletion path.
+Minimization: no unnecessary sensitive data; one latest-location row per device (history is
+never accumulated); evidence stores provider references rather than copies. Retention and
+deletion policy remain to be documented before production.
 
 ---
 
@@ -256,37 +297,49 @@ needed; retention windows enforced (`retention_until`) with a documented deletio
 
 Security is a hard requirement, not a phase.
 
-- **RLS enabled on every table containing user or incident data.**
-- A user cannot read another user's private incidents, evidence, or trusted contacts.
-- A nearby responder sees only fields authorized for that incident and their membership
-  scope; the location needed to assist is granted at `ACCEPTED`, not at `NOTIFIED`.
+- The **Android app never talks to the database.** The only legitimate database client is the
+  server, using the service-role key held server-side. RLS is enabled with **zero policies**
+  (deny-all) on every table, and table/function privileges are revoked from `anon` /
+  `authenticated` (`0003_rls.sql`) — nothing but the service role can read or write a row.
+- Identity is the device: `X-Device-Id` (UUID v4) is validated and re-derived server-side on
+  every request. A role, user id, or incident ownership claimed by the client is never trusted.
+- Per-viewer scoping is enforced server-side today: a responder gets incident detail and exact
+  location only after `ACCEPTED` (never at `NOTIFIED`), and evidence/call detail stay owner-only.
 - **The Supabase service-role key never ships in the Android app.**
-- **The Vapi private API key never ships in the Android app.**
-- Privileged operations run on trusted backend (Edge Function / FastAPI) only.
-- Server-side validation of: incident ownership, state transitions, payload shape, rate
-  limits, idempotency keys.
-- Evidence in **private** Storage buckets, accessed via short-lived signed URLs.
-- Rate limits + idempotency on SOS creation and escalation (duplicate taps must not create
-  duplicate incidents or duplicate dispatch calls).
-- Audit trail for security-relevant actions.
-- Documented data-deletion and incident-retention policy.
+- **The Vapi private key and webhook secret never ship in the Android app.**
+- Vapi webhooks are **signature-verified** (HMAC-SHA256, or the documented Bearer/header auth,
+  constant-time comparison) before any processing; unverifiable payloads are rejected with 401;
+  unattributable call references are quarantined, never guessed onto another incident.
+- Server-side validation of: incident ownership, state transitions (invalid transitions are
+  rejected with 409, not silently ignored), payload shape (strict Zod schemas), rate limits,
+  idempotency keys.
+- Rate limits + idempotency implemented and tested: duplicate SOS taps return the same
+  incident; call attempts are idempotent per (incident, recipient, level, attempt).
+- Append-only `audit_logs` and `responder_events` for security-relevant actions.
+- Evidence in **private** Storage buckets via short-lived signed URLs — planned with the
+  Android/Storage phase; today evidence stores provider references.
+- Data-deletion and incident-retention policy: to be documented before production.
 
 Test requirement: automated cases proving one user cannot access another user's incidents,
-evidence, or trusted contacts, and cannot forge responder membership.
+evidence, or trusted contacts, and cannot forge responder membership. The current suite covers
+device isolation and responder scoping end-to-end at the endpoint level (`server/tests/`);
+membership-forging cases land with the responder HTTP flows.
 
 ---
 
 ## 9. Integrations that are **not** working yet
 
-No integration below is implemented. Credentials, paid plans, or formal authorization are
-prerequisites, and none has been obtained in this repository. Development uses mock providers
-only; no real emergency call is placed by any test or demo.
+No integration below is working end-to-end. The Vapi client and webhook handling exist in the
+server but run against mocks without credentials; nothing else is implemented. Credentials,
+paid plans, or formal authorization are prerequisites, and none has been obtained in this
+repository. Development uses mock providers only; no real emergency call is placed by any
+test or demo.
 
 | Integration | State | What it actually needs |
 | --- | --- | --- |
 | **Groq** (emergency-analysis LLM) | ⬜ not integrated | Groq account + `GROQ_API_KEY` held server-side; a currently-supported model ID via `GROQ_MODEL`; backend health check (§10) |
 | FCM push notifications | ⬜ not integrated | Firebase project, server credentials, notification permissions — also the delivery path for nearby-responder alerts (§11.3) |
-| Vapi AI calls + telephony number | ⬜ interface only | Vapi account, a dedicated Vapi phone number, private API key held server-side, provider webhook validation. Without the number, the SOS dial-out of §11 cannot exist |
+| Vapi AI calls + telephony number | Server adapter + webhook handler implemented (mock-first) | The outbound-call client (REST) and webhook verification/intake exist in `server/`; without a Vapi account, dedicated number, and keys the provider factory stays on the mock. The app-side SOS dial-out (§11) is not started |
 | WebRTC live video/audio | ⬜ interface only | Signaling path, TURN/STUN infrastructure, explicit consent flow |
 | Google Maps | ⬜ not integrated | Billing-enabled API key, usage-policy review |
 | Police / ambulance dispatch | ⬜ no integration exists | Official emergency-service API or authorized partnership. Without it, escalation notifies trusted contacts and the user; it does **not** claim dispatch. Success is recorded only on receiving-service confirmation |
@@ -315,8 +368,8 @@ acceptance / failure tracked separately.
 ## 10. Emergency Intelligence Engine — Groq LLM
 
 Groq is the primary LLM of the incident-analysis pipeline. Google Gemini is removed from the
-design (§9). Like every integration in §9, **none of this is implemented yet**; it is the
-binding specification for the backend work.
+design (§9). Like the other integrations in §9, **the Groq engine is not implemented yet**;
+it is the binding specification for the backend work.
 
 ### 10.1 Configuration
 
@@ -398,8 +451,9 @@ the app itself. The point of using a **phone call instead of VoIP** is durabilit
 voice channel works over plain network coverage even when mobile data or the internet is off
 or congested — the emergency can still reach our ears without internet.
 
-> Not implemented yet — this is the specification for that feature. No real emergency call is
-> placed by any build, test, or demo.
+> Not implemented yet — no app-side dial-out exists. The server-side webhook intake (signature
+> verification, transcripts, recordings) is implemented mock-first and tested; the phone-side
+> dial described here is not. No real emergency call is placed by any build, test, or demo.
 
 ### 11.1 What happens on SOS activation
 
@@ -456,9 +510,9 @@ or congested — the emergency can still reach our ears without internet.
   a cellular call; the call's own uplink is what Vapi receives. The app does not claim to
   record audio the platform does not give it.
 - **Consent and law.** Bystander audio and call recording fall under one-/two-party consent
-  rules that vary by jurisdiction; transcripts are sensitive evidence subject to
-  `retention_until` (§7). Legal review is a prerequisite for production, and tests never use
-  real calls or real people's audio.
+  rules that vary by jurisdiction; transcripts are sensitive evidence and must be covered by
+  the incident-retention and deletion policy (§7). Legal review is a prerequisite for
+  production, and tests never use real calls or real people's audio.
 - **Cost and abuse.** Every SOS call is billable telephony + AI minutes: rate limits,
   duplicate-call protection, and an incident-scoped cost policy are mandatory.
 - **Store policy.** Auto-dial behind `CALL_PHONE` is a Play policy review item; it is an
@@ -472,7 +526,7 @@ or congested — the emergency can still reach our ears without internet.
 
 ## 12. UI requirements
 
-Sign-in · home · large SOS button · current location + permission status · trusted-contact
+First-launch device registration (no sign-in) · home · large SOS button · current location + permission status · trusted-contact
 management · active incident screen (owner view) · incoming assist request + responder status
 view · evidence upload status · emergency response status · settings for shake sensitivity and
 false-alarm handling.
@@ -490,31 +544,52 @@ present them as account types anywhere.
 
 ---
 
-## 13. Setup (to be completed with the first scaffold)
+## 13. Setup
 
-Prerequisites: Android Studio with the JDK required by the AGP version pinned at scaffold
-time, Node or Deno for Supabase CLI tooling, a Supabase project, and a physical Android
-device for sensor/camera/location testing.
+### Server (implemented, `server/`)
+
+Prerequisites: Node.js 20+.
 
 ```
-# planned — these commands become valid once the project and migrations exist
-git clone https://github.com/piyush-kumar499/LexNova-HK26-0040.git
-cd LexNova-HK26-0040
+cd server
+npm install
+cp .env.example .env        # fill in real values locally; .env is git-ignored — never commit it
+npm run dev                 # http://localhost:8080 (tsx watch)
+npm test                    # Vitest — mock-first; no keys, no network, no real calls
+npm run typecheck           # strict TypeScript, no emit
+npm run build && npm start  # compiled run
+```
+
+- **Development without Supabase:** with no `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`, the
+  server runs on an in-memory database (data lost on restart) and logs a loud warning.
+  `production` refuses to start without Supabase credentials.
+- **Development without Vapi:** without the Vapi values the call provider factory selects the
+  **mock** — every simulated call is logged as MOCKED and recorded with `provider: "mock"`.
+  A real call is placed only when private key + phone number + assistant are all configured.
+- **Migrations:** apply `server/migrations/0001_init.sql`, `0002_functions.sql`,
+  `0003_rls.sql` to the Supabase project (SQL editor, or `supabase db push` after linking the
+  project). The server probes the database at boot and logs a clear error until the schema is
+  applied.
+- **Webhooks:** Vapi needs a public URL — set `NGROK_URL` and point the Vapi dashboard webhook
+  to `NGROK_URL/vapi/webhook`. Free ngrok URLs change on every restart.
+- The full environment template is `server/.env.example`. Health check today is `GET /health`;
+  the combined Supabase/Groq/Vapi configuration report (§10.1) is still planned.
+
+### Android app (not started)
+
+Prerequisites: Android Studio with the JDK required by the AGP version pinned at scaffold
+time, and a physical Android device for sensor/camera/location testing.
+
+```
+# planned — these commands become valid once the app project exists
 cp .env.example app/src/main/assets/env.properties   # placeholders; real values never committed
-supabase link --project-ref <your-ref>
-supabase db push            # applies version-controlled migrations + RLS
 ./gradlew :app:assembleDebug
 ```
 
 Backend `.env.example` keys (placeholders only): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
-(server only), `GROQ_API_KEY`, `GROQ_MODEL`, `VAPI_API_KEY`, `VAPI_SOS_ASSISTANT_ID`,
-`VAPI_SOS_PHONE_NUMBER` (dialed by the app), `VAPI_WEBHOOK_SECRET`. Real values go in the
-local, git-ignored `.env` only. Planned health check: one backend endpoint verifies Supabase,
-Groq (model + connectivity, §10.1), and Vapi configuration and reports each as configured/
-unavailable without echoing any secret.
-
-Supabase setup guide, `.env.example` template, and the local development guide are
-deliverables of the foundation phase and are not written yet.
+(server only), `GROQ_API_KEY`, `GROQ_MODEL`, `VAPI_PRIVATE_KEY`, `VAPI_ASSISTANT_ID`,
+`VAPI_PHONE_NUMBER_ID`, `VAPI_WEBHOOK_SECRET` — current names live in `server/.env.example`.
+Real values go in the local, git-ignored `.env` only.
 
 **Never commit credentials.** The service-role key, the Groq API key, and the Vapi private
 key stay server-side; the APK ships no secrets.
@@ -523,7 +598,25 @@ key stay server-side; the APK ships no secrets.
 
 ## 14. Testing
 
-Minimum scenarios required by the specification:
+**Implemented today — `server/tests` (Vitest, mock-first: no Supabase project, no API keys,
+no real calls):**
+
+- configuration: defaults, production requirements, whitespace handling, Vapi config detection;
+- device identity: missing / malformed / deactivated IDs, auto-registration (once), UUID
+  normalization, per-device rate limits, GET routes exempt for polling;
+- device profile + location: updates, field clearing, strict-schema rejection, out-of-range
+  coordinates, latest-fix-only storage;
+- SOS: creation, duplicate `clientRequestId` replays, latest-location fallback, cancel and
+  resolve rules, the state machine, owner vs non-owner access, NOTIFIED vs ACCEPTED responder
+  scoping;
+- in-memory database equivalence: PostGIS-style nearby queries with privacy / eligibility
+  filters, SOS + call idempotency, trusted-contact scoping;
+- Vapi: status normalization, provider selection (mock vs real), escalation calls with
+  delivery truth, no-answer → next trusted contact;
+- webhook: signature rejection and acceptance (HMAC + bearer), status application, transcript
+  segment dedup, recording reference as evidence, unknown-reference quarantine, malformed JSON.
+
+**Minimum scenarios required by the specification:**
 
 - normal SOS activation;
 - duplicate SOS requests (idempotency);
@@ -567,12 +660,17 @@ API keys, no real calls:
 - incident owner isolation still holds when a responder, a nearby user, and a call transcript
   all touch the same incident.
 
-Test frameworks and their pinned versions are chosen at first scaffold. Until code exists,
-no test result should be reported for this project.
+The server test framework (Vitest · pinned in `server/package.json`) is chosen; Android test
+frameworks will be chosen at its first scaffold. No test result should be reported unless it
+comes from a run of the suite.
 
 ---
 
 ## 15. Roadmap
+
+> Server-side progress: the backend half of item 1 and the mock-first calling + webhook half
+> of items 5–7 are implemented in `server/` (see §1). The Android app, nearby HTTP flows,
+> responder accept/decline endpoints, and the Groq engine remain ahead.
 
 1. **Foundation** — Android project, DI, navigation, Supabase link, migrations + RLS, SOS
    state machine, tests for owner isolation.
@@ -597,7 +695,9 @@ no test result should be reported for this project.
 
 ## Known limitations
 
-- Documentation-only state: no build, no tests, no deployed backend exists yet.
+- Server-first state: the backend foundation exists and is covered by a mock-based test suite,
+  but nothing is deployed, no real call has been placed, and the Android app does not exist
+  yet — there is no end-to-end product today.
 - Emergency-service dispatch is out of reach without official integration or authorization;
   until then the product assists and informs, and must be described that way in all copy.
 - The voice uplink (§11) needs mobile voice coverage, a working Vapi number, and a
