@@ -190,6 +190,7 @@ export interface Database {
     patch: Partial<
       Pick<
         CallEventRow,
+        | "call_reference"
         | "status"
         | "ended_reason"
         | "started_at"
@@ -711,6 +712,7 @@ export class SupabaseDatabase implements Database {
     patch: Partial<
       Pick<
         CallEventRow,
+        | "call_reference"
         | "status"
         | "ended_reason"
         | "started_at"

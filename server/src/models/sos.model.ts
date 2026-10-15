@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { AppError } from "../utils/errors.js";
 
 export const INCIDENT_STATUSES = [
@@ -193,3 +194,44 @@ export interface IncidentEvidenceRow {
   captured_at: string | null;
   created_at: string;
 }
+
+// ---------------------------------------------------------------------------
+// Request schemas
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /sos. Coordinates are optional: the app may lack location permission,
+ * in which case the server falls back to the device's latest stored fix.
+ * deviceTimestamp is the on-device activation time — for offline-queued
+ * events (spec §14) it may be in the past and becomes activated_at.
+ */
+export const createSosSchema = z
+  .object({
+    triggerType: z.enum(TRIGGER_TYPES),
+    latitude: z.number().min(-90).max(90).optional(),
+    longitude: z.number().min(-180).max(180).optional(),
+    locationAccuracy: z.number().min(0).max(100_000).optional(),
+    deviceTimestamp: z.iso.datetime({ offset: true }),
+    clientRequestId: z.string().trim().min(1).max(128),
+  })
+  .strict()
+  .refine((data) => (data.latitude === undefined) === (data.longitude === undefined), {
+    error: "latitude and longitude must be provided together",
+    path: ["longitude"],
+  });
+
+export type CreateSosInput = z.infer<typeof createSosSchema>;
+
+/** POST /sos/:incidentId/cancel — the explicit false-alarm flow. */
+export const cancelSosSchema = z
+  .object({ reason: z.string().trim().min(1).max(500) })
+  .strict();
+
+export type CancelSosInput = z.infer<typeof cancelSosSchema>;
+
+/** POST /sos/:incidentId/resolve */
+export const resolveSosSchema = z
+  .object({ resolutionReason: z.string().trim().min(1).max(1000) })
+  .strict();
+
+export type ResolveSosInput = z.infer<typeof resolveSosSchema>;

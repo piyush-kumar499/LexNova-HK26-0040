@@ -501,6 +501,7 @@ export class MemoryDatabase implements Database {
     patch: Partial<
       Pick<
         CallEventRow,
+        | "call_reference"
         | "status"
         | "ended_reason"
         | "started_at"
