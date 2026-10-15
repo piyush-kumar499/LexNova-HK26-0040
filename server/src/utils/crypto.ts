@@ -15,6 +15,14 @@ export function normalizeDeviceId(value: string): string {
   return value.trim().toLowerCase();
 }
 
+/** Any UUID shape (used for route params like :incidentId before DB lookup). */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isUuid(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
 /**
  * HMAC-SHA256 over the raw body, hex-encoded. Used for Vapi webhook
  * signature verification (spec §5.10).

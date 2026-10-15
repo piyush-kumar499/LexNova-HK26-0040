@@ -4,11 +4,13 @@ import type { AppConfig } from "./config/env.js";
 import { buildLoggerOptions } from "./utils/logger.js";
 import { createDatabase, type Database } from "./services/supabase.service.js";
 import { DeviceService } from "./services/device.service.js";
+import { SosService } from "./services/sos.service.js";
 import { createDeviceAuth, createDeviceRateLimit } from "./middleware/deviceAuth.js";
 import { createRateLimiter, type RateLimiter } from "./middleware/rateLimit.js";
 import { registerErrorHandlers } from "./middleware/error.js";
 import { healthRoutes } from "./routes/health.js";
 import { deviceRoutes } from "./routes/device.js";
+import { sosRoutes } from "./routes/sos.js";
 
 /**
  * Shared context handed to route registrars. Grows as features land
@@ -19,6 +21,7 @@ export interface AppContext {
   db: Database;
   log: FastifyBaseLogger;
   deviceService: DeviceService;
+  sosService: SosService;
   limiter: RateLimiter;
   /** Identity middleware: validates X-Device-Id, auto-registers, attaches request.device. */
   deviceAuth: preHandlerHookHandler;
@@ -46,12 +49,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const limiter = createRateLimiter(deps.config);
   const deviceService = new DeviceService(bundle.db);
   const deviceAuth = createDeviceAuth({ deviceService });
+  const sosService = new SosService(bundle.db, app.log);
 
   const ctx: AppContext = {
     config: deps.config,
     db: bundle.db,
     log: app.log,
     deviceService,
+    sosService,
     limiter,
     deviceAuth,
     deviceRateLimit: createDeviceRateLimit(limiter),
@@ -66,6 +71,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   app.register(healthRoutes);
   deviceRoutes(app, ctx);
+  sosRoutes(app, ctx);
 
   return app;
 }
